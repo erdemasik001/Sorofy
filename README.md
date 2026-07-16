@@ -12,20 +12,24 @@ On Stellar/Soroban, a deployed contract is opaque bytes — there's no programma
 
 Rebuild the contract from source in a deterministic, isolated environment (digest-pinned Docker image), byte-compare the resulting WASM's sha256 against the on-chain hash, and serve the result through a free public API.
 
-```
-Developer / Explorer
-        │  source (tarball|git) + target WASM hash
-        ▼
-┌─────────────────────────────┐
-│  Verification Service        │
-│  1. read SEP-58 meta         │
-│  2. bldimg (pinned Docker)   │
-│  3. rebuild in sandbox       │
-│  4. compare sha256           │
-└─────────────────────────────┘
-        │  result (verified / mismatch) + source link
-        ▼
-   Cache + Public API  ◄── Explorer / Wallet / Lab / stellar-cli
+```mermaid
+flowchart TD
+    dev["Developer / Explorer"] -->|"source (uri) + contract_id"| api["Public REST API<br/>POST /verify · GET /verify/{id}"]
+    api --> cache{{"Cache hit?"}}
+    cache -->|yes| result
+    cache -->|no| rpc["Soroban RPC<br/>contract_id → on-chain WASM hash"]
+    rpc --> meta["Read SEP-58 metadata<br/>bldimg · bldopt · source_uri · source_sha256"]
+    meta --> build["Deterministic rebuild<br/>digest-pinned Docker, network-isolated sandbox"]
+    build --> cmp["sha256(rebuilt) == sha256(on-chain)?"]
+    cmp --> result["Result: verified / mismatch<br/>+ trust_level + source link"]
+    result --> store[("Cache / registry")]
+    result -->|cheap query| consumers["Explorer · Wallet · Lab · stellar-cli"]
+
+    subgraph next["Post-MVP (M2/M3)"]
+        multi["Multiple independent verifiers<br/>publish + surface disagreement"]
+        retro["Retroactive registry<br/>for pre-SEP-58 contracts"]
+    end
+    store -.-> next
 ```
 
 ## MVP scope
@@ -39,6 +43,29 @@ Developer / Explorer
 
 Rust, Axum, Docker, Soroban RPC, `stellar-cli`.
 
+## Repo layout
+
+```
+crates/
+  verifier-core/   # SEP-58 metadata model, sha256 compare, reproduction pipeline (Day1)
+  api/             # public REST API — Axum server, cache, on-chain lookup (Day2)
+docs/
+  sep-58-notes.md  # extracted SEP-58 field reference our verifier consumes
+PLAN.md            # day-by-day MVP build plan
+```
+
+## Development
+
+```bash
+cargo build            # build the workspace
+cargo test -p verifier-core
+```
+
+The deterministic build engine (Day1) runs untrusted source inside a network-isolated,
+digest-pinned Docker container. On the Linux deploy target this is native Docker; for local
+dev on Windows we run Docker inside WSL2 (Ubuntu) rather than Docker Desktop.
+
 ## License
 
 MIT
+
