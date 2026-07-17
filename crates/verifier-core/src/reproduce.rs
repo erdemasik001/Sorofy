@@ -76,6 +76,14 @@ pub struct ReproductionReport {
     /// The `.wasm` path inside the container, relative to the crate root.
     pub artifact: String,
     pub bldimg: String,
+    /// The `repo@sha256:...` digest the daemon actually resolved `bldimg` to.
+    ///
+    /// This is the image the WASM was really built from — the honest pin for the
+    /// verification record, even when `bldimg` was passed as a movable tag under
+    /// `--allow-unpinned-image`. `None` for a locally-built image that was never
+    /// pushed to a registry, so it has no digest to resolve.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bldimg_digest: Option<String>,
     pub bldopt: Vec<String>,
     /// sha256 of the source archive actually built.
     pub source_sha256: String,
@@ -152,7 +160,20 @@ pub fn reproduce(docker: &Docker, request: &ReproductionRequest) -> Result<Repro
     } else {
         VerificationResult::Mismatch
     };
-    tracing::info!(?result, %rebuilt, %expected, "reproduction complete");
+
+    // Record the digest the image actually resolved to. The fetch and build
+    // phases already pulled it, so it is present locally now. This is
+    // best-effort metadata for the record, not a gate: a failure to resolve it
+    // (or a local image that has no registry digest) must not fail a build that
+    // otherwise reproduced.
+    let bldimg_digest = match docker.image_digest(&request.bldimg) {
+        Ok(digest) => digest,
+        Err(e) => {
+            tracing::warn!(error = %e, "could not resolve bldimg digest");
+            None
+        }
+    };
+    tracing::info!(?result, %rebuilt, %expected, digest = ?bldimg_digest, "reproduction complete");
 
     Ok(ReproductionReport {
         result,
@@ -161,6 +182,7 @@ pub fn reproduce(docker: &Docker, request: &ReproductionRequest) -> Result<Repro
         rebuilt_wasm_size: wasm.len(),
         artifact,
         bldimg: request.bldimg.clone(),
+        bldimg_digest,
         bldopt: request.bldopt.clone(),
         source_sha256: source.sha256,
         // MVP: every image is untrusted until the allowlist lands. The field is
@@ -214,6 +236,17 @@ fn fetch_dependencies(
     Ok(())
 }
 
+/// Whether a `docker cp` error is "the source path does not exist" rather than
+/// an infrastructure failure. `docker cp` phrases a missing path differently
+/// across versions, so match the known shapes; anything else stays a real
+/// [`VerifyError::Docker`] attributed to our side, not the submitter's.
+fn is_missing_path(docker_error: &str) -> bool {
+    let msg = docker_error.to_ascii_lowercase();
+    msg.contains("no such file or directory")
+        || msg.contains("could not find the file")
+        || msg.contains("no such container:path")
+}
+
 /// Pull the built `.wasm` out of the container.
 ///
 /// Copies the release directory out as a tar and picks the contract artifact.
@@ -229,9 +262,13 @@ fn extract_wasm(container: &crate::docker::Container<'_>, workdir: &str) -> Resu
     let release_dir = format!("{workdir}/target/{WASM_TARGET}/release");
     let tar = match container.get_archive(&release_dir) {
         Ok(tar) => tar,
-        // A successful build with no release dir at all: the build did not
-        // produce a wasm32 artifact (e.g. bldopt pointed at the wrong crate).
-        Err(VerifyError::Docker(_)) => return Err(VerifyError::NoWasmProduced),
+        // A missing release dir means the build produced no wasm32 artifact
+        // (e.g. a bldopt pointed the build at the wrong crate) — the submitter's
+        // problem. Any *other* docker failure (daemon down, killed container) is
+        // ours, and must not be misreported as "your source built nothing".
+        Err(VerifyError::Docker(msg)) if is_missing_path(&msg) => {
+            return Err(VerifyError::NoWasmProduced)
+        }
         Err(e) => return Err(e),
     };
 

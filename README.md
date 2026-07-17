@@ -65,10 +65,16 @@ WASM hash:
 
 ```bash
 cargo run -p verifier-core --bin verify-core -- \
-  --repo https://github.com/user/contract --rev <commit> \
-  --bldimg <image@sha256:...> \
-  --wasm-hash <on-chain-sha256>
+  --repo https://github.com/erdemasik001/stellar-verify-fixture-hello-world \
+  --rev c08333e9924bfb45ee221f3edeb8ded4d4840397 \
+  --bldimg stellar-verify/build-image:rust1.91.1-cli23.2.1 --allow-unpinned-image \
+  --wasm-hash b68602842d3a1d169d54fe3e57c0511a774df4710553d6d4d22e653d62bf5f5b
 ```
+
+That command reproduces the Day0 contract from its published source fixture
+([`stellar-verify-fixture-hello-world`](https://github.com/erdemasik001/stellar-verify-fixture-hello-world))
+and prints `VERIFIED` — copy-paste runnable once the build image exists (below).
+For a digest-pinned `bldimg` on a registry, drop `--allow-unpinned-image`.
 
 Exit codes: `0` verified, `1` mismatch, `2` error. Add `--json` for the full report.
 
@@ -86,11 +92,16 @@ Verified end to end: the containerized build reproduces the Day0 contract byte-i
 
 ```bash
 cargo build                    # build the workspace
-cargo test -p verifier-core
+cargo test --workspace         # offline unit tests
 
 # Build the image the verifier builds contracts in
 docker build --platform linux/amd64 \
   -t stellar-verify/build-image:rust1.91.1-cli23.2.1 docker/build-image
+
+# End-to-end reproduction tests: rebuild the published fixture in a container
+# and check the four verified/mismatch cases. Needs Docker + the image above,
+# so they are #[ignore]d out of the default run.
+cargo test -p verifier-core -- --ignored
 ```
 
 On the Linux deploy target this is native Docker; for local dev on Windows we run Docker

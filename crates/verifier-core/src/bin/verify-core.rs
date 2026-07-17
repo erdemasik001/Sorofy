@@ -136,6 +136,9 @@ fn print_report(report: &verifier_core::ReproductionReport) {
     println!("  rebuilt:   {}", report.rebuilt_wasm_sha256);
     println!("  artifact:  {} ({} bytes)", report.artifact, report.rebuilt_wasm_size);
     println!("  bldimg:    {}", report.bldimg);
+    if let Some(digest) = &report.bldimg_digest {
+        println!("  digest:    {digest}");
+    }
     if !report.bldopt.is_empty() {
         println!("  bldopt:    {}", report.bldopt.join(" "));
     }

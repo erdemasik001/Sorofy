@@ -13,7 +13,7 @@ container**, independently confirming Day0's cross-environment finding:
 |---|---|---|---|
 | Day0 manual (Windows, native) | hello-world scaffold | `b68602842d3a1d169d54fe3e57c0511a774df4710553d6d4d22e653d62bf5f5b` | baseline |
 | Day0 manual (WSL2, native) | same | `b68602…` | match |
-| **Day1 automated (container)** | same, at commit `c1c9217` | **`b68602…`** (660 B) | **verified** |
+| **Day1 automated (container)** | [fixture](https://github.com/erdemasik001/stellar-verify-fixture-hello-world) at `c08333e` | **`b68602…`** (660 B) | **verified** |
 
 The engine also discriminates, which is the part that makes it worth anything:
 
@@ -98,16 +98,31 @@ never reach the WASM. That is *why* the container's `CARGO_HOME` can be
 
 ## Reproducing this
 
+The source built above is published as a standalone fixture so anyone can rerun
+this end to end:
+[`erdemasik001/stellar-verify-fixture-hello-world`](https://github.com/erdemasik001/stellar-verify-fixture-hello-world)
+at commit `c08333e9924bfb45ee221f3edeb8ded4d4840397`.
+
 ```bash
 # Build the image (Linux/WSL2; Docker Engine, not Docker Desktop)
 docker build --platform linux/amd64 \
   -t stellar-verify/build-image:rust1.91.1-cli23.2.1 docker/build-image
 
-# Verify a contract
+# Reproduce the Day0 contract from the published fixture
 cargo run -p verifier-core --bin verify-core -- \
-  --repo <git-url> --rev <commit> \
+  --repo https://github.com/erdemasik001/stellar-verify-fixture-hello-world \
+  --rev c08333e9924bfb45ee221f3edeb8ded4d4840397 \
   --bldimg stellar-verify/build-image:rust1.91.1-cli23.2.1 --allow-unpinned-image \
-  --wasm-hash <on-chain-sha256>
+  --wasm-hash b68602842d3a1d169d54fe3e57c0511a774df4710553d6d4d22e653d62bf5f5b
+```
+
+This prints `VERIFIED` with `release/hello_world.wasm (660 bytes)` and exits `0`.
+
+The same four rows from the discrimination table above run as automated tests
+against this fixture:
+
+```bash
+cargo test -p verifier-core -- --ignored
 ```
 
 Exit codes: `0` verified, `1` mismatch, `2` error. On Windows the CLI shells into
