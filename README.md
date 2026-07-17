@@ -50,11 +50,14 @@ crates/
   verifier-core/   # SEP-58 reproduction pipeline + `verify-core` CLI (Day1)
   api/             # public REST API — Axum server, cache, on-chain lookup (Day2)
 docker/
-  build-image/     # digest-pinned build image (SEP-58 `bldimg`)
+  build-image/     # digest-pinned build image (SEP-58 `bldimg`) + publish.sh
+  api/             # runtime image for the sorofy-api service (Day3)
 docs/
   sep-58-notes.md              # SEP-58 field reference our verifier consumes
   day0-reproduction-findings.md # manual reproduction + determinism experiments
   day1-build-engine.md          # build engine results, sandbox design, friction log
+  day2-api.md                   # REST API, on-chain lookup, cache, real-size build
+  day3-deploy-demo.md           # retroactive path, publish, deploy-readiness, demo
 PLAN.md            # day-by-day MVP build plan
 ```
 
@@ -96,15 +99,16 @@ see [docs/day2-api.md](docs/day2-api.md).
 `sorofy-api` fronts the engine with a job queue and a result cache:
 
 ```bash
-SOROFY_ALLOW_UNPINNED_IMAGE=1 cargo run -p api --bin sorofy-api
+cargo run -p api --bin sorofy-api    # digest enforcement on by default
 
 # Verify a deployed contract: the expected hash is resolved on-chain via
-# Soroban RPC, never taken from the caller.
+# Soroban RPC, never taken from the caller. `bldimg` is the published,
+# digest-pinned build image (a bare tag is rejected — see below).
 curl -X POST localhost:8080/verify -H 'Content-Type: application/json' -d '{
   "contract_id": "CAZAVVTM3GXFNCLR66FYHJJ43MEEUV3C6PQYRQT5JVGAO2RS6S4OHRT6",
   "repo": "https://github.com/erdemasik001/sorofy-fixture-token",
   "rev": "cd68767f3b36456228b01244ecd4e6f935b5e986",
-  "bldimg": "sorofy/build-image:rust1.91.1-cli23.2.1"
+  "bldimg": "ghcr.io/erdemasik001/sorofy-build-image@sha256:cff44167d2ee90f901c768ccdb75eb5c382c95295f44bcd7ee4b543f0adf9588"
 }'
 # → {"id":1,"status":"pending","wasm_hash":"47d2801e…"}
 
@@ -115,6 +119,30 @@ curl localhost:8080/verify/CAZAVVTM3GXFNCLR66FYHJJ43MEEUV3C6PQYRQT5JVGAO2RS6S4OH
 `GET /verify/{id|contract_id|wasm_hash}` serves the cached result: `pending` /
 `verified` / `mismatch` / `error` / `404 not_found`. SQLite-backed; results
 survive restarts.
+
+### Retroactive verification (no on-chain source metadata)
+
+The same contract carries **no SEP-58 source fields** on-chain, yet it can still
+be verified by supplying its source out-of-band as an archive. The target hash is
+resolved from the network — the caller passes no `wasm_hash`:
+
+```bash
+curl -X POST localhost:8080/verify -H 'Content-Type: application/json' -d '{
+  "contract_id": "CAZAVVTM3GXFNCLR66FYHJJ43MEEUV3C6PQYRQT5JVGAO2RS6S4OHRT6",
+  "source_uri": "https://github.com/erdemasik001/sorofy-fixture-token/archive/cd68767f3b36456228b01244ecd4e6f935b5e986.tar.gz",
+  "source_sha256": "1cde007365bb93f6dae9b6f2e42b0bf29364c44fa031399116a6cfafa4ede416",
+  "bldimg": "ghcr.io/erdemasik001/sorofy-build-image@sha256:cff44167d2ee90f901c768ccdb75eb5c382c95295f44bcd7ee4b543f0adf9588"
+}'
+# → rebuilt sha256 == on-chain sha256 (47d2801e…) → verified
+```
+
+This is the pre-SEP-58 / retroactive path — see [docs/day3-deploy-demo.md](docs/day3-deploy-demo.md).
+
+The build image is published at
+[`ghcr.io/erdemasik001/sorofy-build-image`](https://github.com/erdemasik001/packages/container/package/sorofy-build-image),
+single-arch, so `bldimg` resolves to one manifest digest. A bare tag is refused:
+`build image must be digest-pinned (image@sha256:...)`. For local dev against an
+unpublished image, run with `SOROFY_ALLOW_UNPINNED_IMAGE=1`.
 
 ## Development
 

@@ -1,0 +1,6 @@
+target/
+.git/
+*.db
+docs/
+docker/
+.claude/

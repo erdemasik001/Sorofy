@@ -1,0 +1,44 @@
+# Fly.io deployment config for sorofy-api.
+#
+# STATUS: prepared, NOT deployed. Fly removed its free allowance for new orgs
+# (card required, ~$5/mo minimum), so live deploy is deferred for the MVP — see
+# docs/day3-deploy-demo.md. This file is the "one command away" artifact:
+#   flyctl launch --no-deploy   # first time, creates the app + volume
+#   flyctl deploy
+#
+# The hard requirement this service places on the platform: it spawns build
+# containers, so it needs a Docker daemon it can reach. On Fly that means running
+# a dockerd inside the machine (a start wrapper that launches `dockerd` then
+# `sorofy-api`, with the machine granted the extra privileges dockerd needs).
+# A plain VPS with the host socket mounted is strictly simpler — see the deploy
+# doc. The values below are a starting point, not a turnkey deploy.
+
+app = "sorofy-api"
+primary_region = "fra"
+
+[build]
+  dockerfile = "docker/api/Dockerfile"
+
+[env]
+  SOROFY_BIND = "0.0.0.0:8080"
+  SOROFY_DB = "/data/sorofy.db"
+  SOROFY_RPC = "https://soroban-testnet.stellar.org"
+  # bldimg is digest-pinned once the build image is published (docs/day3), so
+  # unpinned images are NOT allowed in production — leave SOROFY_ALLOW_UNPINNED_IMAGE unset.
+
+[[mounts]]
+  source = "sorofy_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+# Container builds are heavyweight (the API caps concurrency at 2). Give the
+# machine real memory/CPU; the default shared-1x/256MB will OOM a cargo build.
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "2gb"
