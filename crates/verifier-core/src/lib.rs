@@ -1,4 +1,4 @@
-//! Core verification logic for the Soroban Contract Verification Service.
+//! Core verification logic for Sorofy, the Soroban contract verification service.
 //!
 //! Implements SEP-58's reproduction algorithm: take build metadata + a source
 //! reference, rebuild the WASM inside a digest-pinned, network-isolated

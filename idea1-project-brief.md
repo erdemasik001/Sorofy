@@ -1,4 +1,4 @@
-# Soroban Contract Verification Service
+# Sorofy — Soroban Contract Verification Service
 ### Project Brief — Idea 1
 
 *One-liner: An open-source, multi-verifier source verification service that proves a Soroban smart contract's on-chain WASM bytes were built from the public source code shown on explorers.*

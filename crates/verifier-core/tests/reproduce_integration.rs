@@ -30,7 +30,7 @@ use verifier_core::{
 /// byte-identical to the Day0 on-chain WASM below.
 const DEFAULT_REPO: &str = "https://github.com/erdemasik001/stellar-verify-fixture-hello-world";
 const DEFAULT_REV: &str = "c08333e9924bfb45ee221f3edeb8ded4d4840397";
-const DEFAULT_BLDIMG: &str = "stellar-verify/build-image:rust1.91.1-cli23.2.1";
+const DEFAULT_BLDIMG: &str = "sorofy/build-image:rust1.91.1-cli23.2.1";
 
 /// The hash and size Day0 recorded and Day1 reproduces.
 const EXPECTED_WASM: &str = "b68602842d3a1d169d54fe3e57c0511a774df4710553d6d4d22e653d62bf5f5b";

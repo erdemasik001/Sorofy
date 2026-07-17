@@ -9,7 +9,7 @@ members = [
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/erdemasik001/stellar-verify"
+repository = "https://github.com/erdemasik001/Sorofy"
 
 [workspace.dependencies]
 anyhow = "1"

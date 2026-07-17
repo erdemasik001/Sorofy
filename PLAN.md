@@ -1,4 +1,4 @@
-# MVP Yol Haritası — Soroban Contract Verification Service
+# MVP Yol Haritası — Sorofy (Soroban Contract Verification)
 
 > Kaynak: [idea1-project-brief.md](idea1-project-brief.md)
 > Format: Solo geliştirici, 3 günlük hackathon + Day0 hazırlık günü.

@@ -6,7 +6,7 @@ license.workspace = true
 repository.workspace = true
 
 [[bin]]
-name = "stellar-verify-api"
+name = "sorofy-api"
 path = "src/main.rs"
 
 [dependencies]

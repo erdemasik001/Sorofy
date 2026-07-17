@@ -106,13 +106,13 @@ at commit `c08333e9924bfb45ee221f3edeb8ded4d4840397`.
 ```bash
 # Build the image (Linux/WSL2; Docker Engine, not Docker Desktop)
 docker build --platform linux/amd64 \
-  -t stellar-verify/build-image:rust1.91.1-cli23.2.1 docker/build-image
+  -t sorofy/build-image:rust1.91.1-cli23.2.1 docker/build-image
 
 # Reproduce the Day0 contract from the published fixture
 cargo run -p verifier-core --bin verify-core -- \
   --repo https://github.com/erdemasik001/stellar-verify-fixture-hello-world \
   --rev c08333e9924bfb45ee221f3edeb8ded4d4840397 \
-  --bldimg stellar-verify/build-image:rust1.91.1-cli23.2.1 --allow-unpinned-image \
+  --bldimg sorofy/build-image:rust1.91.1-cli23.2.1 --allow-unpinned-image \
   --wasm-hash b68602842d3a1d169d54fe3e57c0511a774df4710553d6d4d22e653d62bf5f5b
 ```
 

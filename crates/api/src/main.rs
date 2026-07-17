@@ -1,4 +1,4 @@
-//! Public REST API for the Soroban Contract Verification Service.
+//! Public REST API for Sorofy, the Soroban contract verification service.
 //!
 //! Day0 scaffold: the Axum server, `POST /verify`, `GET /verify/{id}`,
 //! on-chain lookup, and cache land in Day2. For now this just confirms the
@@ -14,5 +14,5 @@ fn main() {
 
     // Sanity check that verifier-core is linked.
     let empty = verifier_core::sha256_hex(b"");
-    tracing::info!(sha256_empty = %empty, "stellar-verify-api scaffold — Day2 adds the HTTP server");
+    tracing::info!(sha256_empty = %empty, "sorofy-api scaffold — Day2 adds the HTTP server");
 }
