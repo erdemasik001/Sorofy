@@ -86,7 +86,34 @@ rather than bind mounts, and builds run non-root. See
 [docs/day1-build-engine.md](docs/day1-build-engine.md).
 
 Verified end to end: the containerized build reproduces the Day0 contract byte-identically
-(`b68602…`), and a one-word source change flips it to `mismatch`.
+(`b68602…`), and a one-word source change flips it to `mismatch`. The engine also
+reproduces a real token contract we built in the pinned container and deployed to testnet
+([`CAZAVVTM…`](https://stellar.expert/explorer/testnet/contract/CAZAVVTM3GXFNCLR66FYHJJ43MEEUV3C6PQYRQT5JVGAO2RS6S4OHRT6)) —
+see [docs/day2-api.md](docs/day2-api.md).
+
+## The API
+
+`sorofy-api` fronts the engine with a job queue and a result cache:
+
+```bash
+SOROFY_ALLOW_UNPINNED_IMAGE=1 cargo run -p api --bin sorofy-api
+
+# Verify a deployed contract: the expected hash is resolved on-chain via
+# Soroban RPC, never taken from the caller.
+curl -X POST localhost:8080/verify -H 'Content-Type: application/json' -d '{
+  "contract_id": "CAZAVVTM3GXFNCLR66FYHJJ43MEEUV3C6PQYRQT5JVGAO2RS6S4OHRT6",
+  "repo": "<git-url-of-the-source>", "rev": "<commit>",
+  "bldimg": "sorofy/build-image:rust1.91.1-cli23.2.1"
+}'
+# → {"id":1,"status":"pending","wasm_hash":"47d2801e…"}
+
+curl localhost:8080/verify/CAZAVVTM3GXFNCLR66FYHJJ43MEEUV3C6PQYRQT5JVGAO2RS6S4OHRT6
+# → {"status":"verified", "report":{…, "trust_level":"arbitrary"}, …}
+```
+
+`GET /verify/{id|contract_id|wasm_hash}` serves the cached result: `pending` /
+`verified` / `mismatch` / `error` / `404 not_found`. SQLite-backed; results
+survive restarts.
 
 ## Development
 

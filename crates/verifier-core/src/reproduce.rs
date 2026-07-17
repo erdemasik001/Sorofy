@@ -47,6 +47,13 @@ pub struct ReproductionRequest {
     /// We only relax this to build against a locally-built image that has no
     /// registry digest yet.
     pub allow_unpinned_image: bool,
+    /// Write the rebuilt `.wasm` bytes to this path after extraction.
+    ///
+    /// The report only carries the hash; the bytes themselves are needed when
+    /// the rebuilt artifact is the deliverable — e.g. deploying exactly what a
+    /// reproduction produced, so the on-chain hash is *by construction* one the
+    /// engine can land on again.
+    pub emit_wasm: Option<std::path::PathBuf>,
 }
 
 impl ReproductionRequest {
@@ -62,6 +69,7 @@ impl ReproductionRequest {
             expected_wasm_sha256: expected_wasm_sha256.into(),
             timeout: DEFAULT_TIMEOUT,
             allow_unpinned_image: false,
+            emit_wasm: None,
         }
     }
 }
@@ -153,6 +161,10 @@ pub fn reproduce(docker: &Docker, request: &ReproductionRequest) -> Result<Repro
     }
 
     let (artifact, wasm) = extract_wasm(&container, &workdir)?;
+    if let Some(path) = &request.emit_wasm {
+        std::fs::write(path, &wasm)?;
+        tracing::info!(path = %path.display(), bytes = wasm.len(), "wrote rebuilt wasm");
+    }
     let rebuilt = sha256_hex(&wasm);
     let expected = request.expected_wasm_sha256.to_lowercase();
     let result = if rebuilt == expected {

@@ -61,6 +61,11 @@ struct Args {
     #[arg(long)]
     allow_unpinned_image: bool,
 
+    /// Also write the rebuilt .wasm to this path (e.g. to deploy exactly what
+    /// the reproduction produced).
+    #[arg(long)]
+    emit_wasm: Option<std::path::PathBuf>,
+
     /// Print the full report as JSON.
     #[arg(long)]
     json: bool,
@@ -100,6 +105,7 @@ fn main() -> ExitCode {
         expected_wasm_sha256: args.wasm_hash,
         timeout: Duration::from_secs(args.timeout),
         allow_unpinned_image: args.allow_unpinned_image,
+        emit_wasm: args.emit_wasm,
     };
 
     match reproduce(&Docker::autodetect(), &request) {
