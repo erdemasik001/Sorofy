@@ -47,23 +47,55 @@ Rust, Axum, Docker, Soroban RPC, `stellar-cli`.
 
 ```
 crates/
-  verifier-core/   # SEP-58 metadata model, sha256 compare, reproduction pipeline (Day1)
+  verifier-core/   # SEP-58 reproduction pipeline + `verify-core` CLI (Day1)
   api/             # public REST API — Axum server, cache, on-chain lookup (Day2)
+docker/
+  build-image/     # digest-pinned build image (SEP-58 `bldimg`)
 docs/
-  sep-58-notes.md  # extracted SEP-58 field reference our verifier consumes
+  sep-58-notes.md              # SEP-58 field reference our verifier consumes
+  day0-reproduction-findings.md # manual reproduction + determinism experiments
+  day1-build-engine.md          # build engine results, sandbox design, friction log
 PLAN.md            # day-by-day MVP build plan
 ```
+
+## The build engine
+
+`verify-core` rebuilds a contract from source and compares the result to an on-chain
+WASM hash:
+
+```bash
+cargo run -p verifier-core --bin verify-core -- \
+  --repo https://github.com/user/contract --rev <commit> \
+  --bldimg <image@sha256:...> \
+  --wasm-hash <on-chain-sha256>
+```
+
+Exit codes: `0` verified, `1` mismatch, `2` error. Add `--json` for the full report.
+
+A job runs as two containers sharing a `CARGO_HOME` volume: `cargo fetch --locked`
+**with** network, then `stellar contract build` with **`--network=none`**. Compiling runs
+untrusted code (`build.rs`, proc macros), so that phase gets no network; fetching does not
+execute anything, so it can have one. Source enters and artifacts leave over tar streams
+rather than bind mounts, and builds run non-root. See
+[docs/day1-build-engine.md](docs/day1-build-engine.md).
+
+Verified end to end: the containerized build reproduces the Day0 contract byte-identically
+(`b68602…`), and a one-word source change flips it to `mismatch`.
 
 ## Development
 
 ```bash
-cargo build            # build the workspace
+cargo build                    # build the workspace
 cargo test -p verifier-core
+
+# Build the image the verifier builds contracts in
+docker build --platform linux/amd64 \
+  -t stellar-verify/build-image:rust1.91.1-cli23.2.1 docker/build-image
 ```
 
-The deterministic build engine (Day1) runs untrusted source inside a network-isolated,
-digest-pinned Docker container. On the Linux deploy target this is native Docker; for local
-dev on Windows we run Docker inside WSL2 (Ubuntu) rather than Docker Desktop.
+On the Linux deploy target this is native Docker; for local dev on Windows we run Docker
+Engine inside WSL2 (Ubuntu) rather than Docker Desktop. `verify-core` detects that and
+shells into WSL automatically — override with `VERIFY_DOCKER="wsl -d Ubuntu -- docker"`.
 
 ## License
 
