@@ -2,7 +2,14 @@
 
 An open-source, multi-verifier source verification service that proves a Soroban smart contract's on-chain WASM bytes were built from the public source code shown on explorers.
 
-> Status: hackathon MVP in progress. See [PLAN.md](PLAN.md) for the day-by-day build plan and [idea1-project-brief.md](idea1-project-brief.md) for the full project brief.
+> **Status: MVP complete and proven end-to-end** (Day0–Day3). The engine reproduces a
+> real testnet contract byte-for-byte against its on-chain hash, the retroactive path is
+> proven, and the build image is published to GHCR with digest enforcement on. Production
+> deployment and the differentiating M2/M3 work (decentralization, retroactive registry,
+> mainnet + audit) are the **funded roadmap**, resumed on SCF acceptance — this repo is
+> committed at the MVP boundary on purpose. See [PLAN.md](PLAN.md) for the day-by-day build
+> log, [the roadmap](#roadmap--what-happens-after-this-mvp) for what's next, and
+> [idea1-project-brief.md](idea1-project-brief.md) for the full brief.
 
 ## Problem
 
@@ -34,10 +41,29 @@ flowchart TD
 
 ## MVP scope
 
-- Single verification flow: source (git repo/commit) + target WASM hash → deterministic Docker rebuild → sha256 compare
-- REST API: `POST /verify`, `GET /verify/{contract_id|wasm_hash}`
-- Testnet only, simple result cache
-- Multi-verifier decentralization and retroactive verification are architected for but out of scope for the MVP — see [PLAN.md](PLAN.md).
+- Verification flow: source (git repo/commit **or** SEP-58 `source_uri` archive) → deterministic, network-isolated Docker rebuild → sha256 compare against the on-chain hash
+- REST API: `POST /verify`, `GET /verify/{id|contract_id|wasm_hash}`, SQLite result cache (survives restarts)
+- On-chain WASM hash resolved from Soroban RPC — the caller cannot assert the target
+- Testnet only
+- Multi-verifier decentralization and the retroactive *registry* are architected for but out of MVP scope — see the [roadmap](#roadmap--what-happens-after-this-mvp).
+
+### What's proven (every row is a real run, not a mockup)
+
+| Claim | Evidence |
+|---|---|
+| Deterministic containerized rebuild | Day0 contract reproduced byte-identically (`b68602…`); a one-word source change flips it to `mismatch` — [day1](docs/day1-build-engine.md) |
+| Network-isolated sandbox | Two phases sharing one `CARGO_HOME`: `cargo fetch` online, `stellar contract build` with `--network=none`; non-root, no bind mounts — [day1](docs/day1-build-engine.md) |
+| Real-size, on-chain | A token contract built in the pinned image, deployed to testnet ([`CAZAVVTM…`](https://stellar.expert/explorer/testnet/contract/CAZAVVTM3GXFNCLR66FYHJJ43MEEUV3C6PQYRQT5JVGAO2RS6S4OHRT6)), reproduced byte-for-byte against its RPC-resolved hash (`47d2801e…`) — [day2](docs/day2-api.md) |
+| Retroactive path | The same contract carries **no** SEP-58 metadata on-chain, yet is verified from out-of-band source — [day3](docs/day3-deploy-demo.md) |
+| Real `bldimg` digest | Image published to GHCR (single-arch, `sha256:cff44167…`); digest enforcement on by default — bare tags rejected before any container — [day3](docs/day3-deploy-demo.md) |
+
+### Differentiation (why us)
+
+The RFP's three hardest requirements are the parts competitors do least — and where this project aims:
+
+1. **Decentralization / multi-verifier** *(RFP hard requirement)* — independent verifiers publishing results and surfacing disagreement; a single hardcoded verifier "does not meet the bar."
+2. **Retroactive verification** *(RFP priority requirement)* — an off-chain registry for pre-SEP-58 contracts that cannot embed metadata; highest-value, most-skipped, and **already proven at the engine level** (above).
+3. **Trust levels, not a binary** — image trust tiers (`arbitrary` / `publicly-auditable` / `sdf-maintained`) plus a vetted image allowlist, instead of a flat verified/unverified.
 
 ## Stack
 
@@ -58,6 +84,9 @@ docs/
   day1-build-engine.md          # build engine results, sandbox design, friction log
   day2-api.md                   # REST API, on-chain lookup, cache, real-size build
   day3-deploy-demo.md           # retroactive path, publish, deploy-readiness, demo
+  pitch-deck.html               # 8-slide jury pitch (self-contained HTML)
+scripts/
+  demo.ps1           # local demo runner (retroactive verify + tamper→mismatch)
 PLAN.md            # day-by-day MVP build plan
 ```
 
@@ -163,6 +192,49 @@ cargo test -p verifier-core -- --ignored
 On the Linux deploy target this is native Docker; for local dev on Windows we run Docker
 Engine inside WSL2 (Ubuntu) rather than Docker Desktop. `verify-core` detects that and
 shells into WSL automatically — override with `VERIFY_DOCKER="wsl -d Ubuntu -- docker"`.
+
+## Roadmap — what happens after this MVP
+
+The MVP proves the core claim (source → on-chain bytecode, including the retroactive case).
+Everything beyond this line is the **funded SCF roadmap** and resumes on acceptance; the repo
+is committed at the MVP boundary deliberately. Full pitch: [docs/pitch-deck.html](docs/pitch-deck.html).
+
+**Deliberately out of MVP scope (honest status).** Each of these is designed for, not hand-waved:
+
+- **No live public URL yet** — a live deploy needs a reachable Docker daemon, and Fly.io now
+  requires a card (~$5/mo). Deploy artifacts are ready ([`docker/api/Dockerfile`](docker/api/Dockerfile),
+  [`fly.toml`](fly.toml), `.dockerignore`) and the VPS path is one `docker run` away — see
+  [day3 "Deploy-readiness"](docs/day3-deploy-demo.md).
+- **No auth / rate-limiting yet** — mandatory before exposing the socket-mounted service; the first
+  hardening item below.
+- **`trust_level` hardcoded `arbitrary`** — the field is wired end-to-end; the allowlist that promotes
+  it to `publicly-auditable` / `sdf-maintained` is M2.
+- **Single verifier** — decentralization is architected for, not yet built.
+
+**Next up — go live (M0 → M1 hardening).**
+
+1. Deploy to a Docker-capable host: a VPS running the API as Docker-out-of-Docker over a mounted
+   socket (recommended over Fly's in-VM `dockerd`). The exact commands are in
+   [day3](docs/day3-deploy-demo.md).
+2. Harden for public exposure: bearer-token auth on `POST /verify` + rate-limiting. `GET` stays
+   public — it's a cheap public lookup, which is the whole point of the service.
+
+**M2 — Testnet · decentralization + retroactive registry** *(+4–6 weeks)*
+
+- Multiple independent verifier instances publishing the same result, with an architecture that
+  **surfaces disagreement** (the RFP's hard requirement).
+- Off-chain **retroactive registry**: attach `source_uri` + `source_sha256` + a vetted `bldimg` to
+  pre-SEP-58 contracts that can't embed metadata — the engine side is already proven above.
+- **Trust-level allowlist**: promote `trust_level` beyond `arbitrary` from a vetted image list.
+
+**M3 — Mainnet · ship + integrate** *(+4–8 weeks)*
+
+- Mainnet support.
+- Third-party audit via the Soroban **Audit Bank**.
+- At least one reference integration (ideally **Stellar Lab**).
+
+Directly funded by the SCF **Contract Source Verification Service** RFP — Build Award cap
+**$150K XLM**, tranches **10 / 20 / 30 / 40** at acceptance / MVP / testnet / mainnet.
 
 ## License
 
