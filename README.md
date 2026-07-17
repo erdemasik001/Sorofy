@@ -102,7 +102,8 @@ SOROFY_ALLOW_UNPINNED_IMAGE=1 cargo run -p api --bin sorofy-api
 # Soroban RPC, never taken from the caller.
 curl -X POST localhost:8080/verify -H 'Content-Type: application/json' -d '{
   "contract_id": "CAZAVVTM3GXFNCLR66FYHJJ43MEEUV3C6PQYRQT5JVGAO2RS6S4OHRT6",
-  "repo": "<git-url-of-the-source>", "rev": "<commit>",
+  "repo": "https://github.com/erdemasik001/sorofy-fixture-token",
+  "rev": "cd68767f3b36456228b01244ecd4e6f935b5e986",
   "bldimg": "sorofy/build-image:rust1.91.1-cli23.2.1"
 }'
 # → {"id":1,"status":"pending","wasm_hash":"47d2801e…"}

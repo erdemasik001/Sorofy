@@ -15,7 +15,7 @@ the engine reproduce it against the network's own record of its hash.
 | Step | Value |
 |---|---|
 | Source | `soroban-examples` token contract @ upstream `14c069c`, as a standalone package (own `Cargo.lock`, soroban-sdk 27.0.0) |
-| Fixture commit | `cd68767f3b36456228b01244ecd4e6f935b5e986` (local; publishing pending) |
+| Fixture | [`erdemasik001/sorofy-fixture-token`](https://github.com/erdemasik001/sorofy-fixture-token) @ `cd68767f3b36456228b01244ecd4e6f935b5e986` — re-verified from a clean clone of this URL |
 | Container build | 74 crates, proc macros, `lto = true`, `codegen-units = 1` → `soroban_token_contract.wasm`, 8 584 B |
 | Rebuilt hash | `47d2801e115f9a064fe37a8244ef1ffcfa56877668a17f383d3189634a1bcfbd` |
 | Deployed as | [`CAZAVVTM3GXFNCLR66FYHJJ43MEEUV3C6PQYRQT5JVGAO2RS6S4OHRT6`](https://stellar.expert/explorer/testnet/contract/CAZAVVTM3GXFNCLR66FYHJJ43MEEUV3C6PQYRQT5JVGAO2RS6S4OHRT6) (testnet, our own `sorofy-dev` account) |
@@ -83,8 +83,5 @@ engine can land on again.
 
 - **`bldimg` still has no registry digest** — `SOROFY_ALLOW_UNPINNED_IMAGE=1`
   in local dev. Publishing the image (Day3) makes digest enforcement real.
-- **The token fixture is local-only.** The real-size claim is third-party
-  checkable only after the fixture repo is published (same argument as Day1's
-  hello-world fixture).
 - **No rate limiting / auth.** Fine behind a demo; noted for the deploy.
 - `trust_level` still hardcoded `arbitrary` (allowlist is post-MVP).
