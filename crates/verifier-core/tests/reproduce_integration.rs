@@ -23,7 +23,7 @@ use std::path::Path;
 use std::process::Command;
 
 use verifier_core::{
-    reproduce, Docker, ReproductionRequest, SourceRef, VerificationResult,
+    reproduce, Docker, ReproductionRequest, SourceRef, VerificationResult, VerifyError,
 };
 
 /// The published reproduction fixture (item 1). Its release build is
@@ -31,6 +31,11 @@ use verifier_core::{
 const DEFAULT_REPO: &str = "https://github.com/erdemasik001/stellar-verify-fixture-hello-world";
 const DEFAULT_REV: &str = "c08333e9924bfb45ee221f3edeb8ded4d4840397";
 const DEFAULT_BLDIMG: &str = "sorofy/build-image:rust1.91.1-cli23.2.1";
+
+/// GitHub codeload tarball of the same fixture commit — the SEP-58 `source_uri`
+/// path. GitHub prepends a `pax_global_header` pseudo-entry to these tarballs,
+/// so this doubles as a regression test for the single-top-dir walk skipping it.
+const FIXTURE_TARBALL: &str = "https://github.com/erdemasik001/stellar-verify-fixture-hello-world/archive/c08333e9924bfb45ee221f3edeb8ded4d4840397.tar.gz";
 
 /// The hash and size Day0 recorded and Day1 reproduces.
 const EXPECTED_WASM: &str = "b68602842d3a1d169d54fe3e57c0511a774df4710553d6d4d22e653d62bf5f5b";
@@ -135,7 +140,83 @@ fn verified_original_rev_despite_dirty_working_tree() {
     assert_eq!(report.rebuilt_wasm_size, EXPECTED_SIZE);
 }
 
+// --- The SEP-58 archive (`source_uri`) path ---
+
+/// Archive `source_uri` + correct `source_sha256` → `verified`. Exercises the
+/// path the git cases never touch: download, digest check, gunzip,
+/// single-top-dir (skipping GitHub's `pax_global_header`), ownership rewrite —
+/// then the same build. The rebuilt WASM must equal the on-chain hash, i.e. the
+/// archive and git paths land on identical bytes.
+#[test]
+#[ignore = "requires Docker, the pinned build image, and network"]
+fn verified_archive_source_uri() {
+    let sha256 = download_sha256(FIXTURE_TARBALL);
+    let report = reproduce(
+        &Docker::autodetect(),
+        &request(
+            SourceRef::Archive { uri: FIXTURE_TARBALL.into(), source_sha256: sha256 },
+            EXPECTED_WASM,
+        ),
+    )
+    .expect("archive reproduction should succeed");
+
+    assert_eq!(report.result, VerificationResult::Verified);
+    assert_eq!(report.rebuilt_wasm_sha256, EXPECTED_WASM);
+    assert_eq!(report.rebuilt_wasm_size, EXPECTED_SIZE);
+}
+
+/// Archive `source_uri` + wrong `source_sha256` → rejected as `SourceIntegrity`
+/// before any container starts (SEP-58 step 3). The failure is attributed to the
+/// source, not the build — a supplier who ships bytes that don't match the
+/// declared digest is caught up front.
+#[test]
+#[ignore = "requires network to fetch the fixture tarball"]
+fn archive_source_uri_bad_digest_rejected() {
+    let wrong = "0000000000000000000000000000000000000000000000000000000000000000";
+    let err = reproduce(
+        &Docker::autodetect(),
+        &request(
+            SourceRef::Archive { uri: FIXTURE_TARBALL.into(), source_sha256: wrong.into() },
+            EXPECTED_WASM,
+        ),
+    )
+    .expect_err("a mismatched source digest must fail before building");
+
+    match err {
+        VerifyError::SourceIntegrity { expected, actual } => {
+            assert_eq!(expected, wrong);
+            assert_ne!(actual, wrong, "the real digest must differ from the bad one");
+        }
+        other => panic!("expected SourceIntegrity, got {other:?}"),
+    }
+}
+
 // --- helpers ---
+
+/// Download `url` and return the sha256 of the exact bytes received.
+///
+/// The archive test digests what it downloads rather than pinning a constant: a
+/// GitHub codeload tarball is stable for a given commit in practice, but its
+/// digest is not what the test checks — the fetch→verify pipeline is. Shells out
+/// to `curl` (System32 on Windows, `/usr/bin/curl` on the Linux target), in the
+/// same style as the `git` helpers below.
+fn download_sha256(url: &str) -> String {
+    let dir = TempDir::new();
+    let file = dir.path().join("archive.tar.gz");
+    let out = Command::new("curl")
+        .args(["-sSL", url, "-o"])
+        .arg(&file)
+        .output()
+        .expect("run curl");
+    assert!(
+        out.status.success(),
+        "curl failed: {}",
+        String::from_utf8_lossy(&out.stderr).trim()
+    );
+    let bytes = std::fs::read(&file).expect("read downloaded archive");
+    assert!(!bytes.is_empty(), "downloaded archive is empty");
+    verifier_core::sha256_hex(&bytes)
+}
 
 /// Clone the fixture into a throwaway directory the caller can tamper with.
 ///

@@ -93,8 +93,10 @@ never reach the WASM. That is *why* the container's `CARGO_HOME` can be
   `source_uri` in its metadata, and its toolchain (rustc 1.95.0 / sdk 22.0.11 /
   cli 25.2.0) differs from this image's, so it needs both a source pointer and a
   second `bldimg`. This is the retroactive-registry (M2) path.
-- `source_uri` archive path is implemented but has not been exercised end-to-end
-  against a real published tarball.
+- ~~`source_uri` archive path is implemented but has not been exercised
+  end-to-end against a real published tarball.~~ **Closed in Day2** — exercised
+  against a real GitHub tarball (which surfaced and fixed a `pax_global_header`
+  bug); see [day2-api.md](day2-api.md), "SEP-58 archive (`source_uri`) path".
 
 ## Reproducing this
 

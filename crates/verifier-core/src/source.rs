@@ -150,6 +150,19 @@ fn is_gzip(bytes: &[u8]) -> bool {
     bytes.starts_with(&[0x1f, 0x8b])
 }
 
+/// True for pax extended/global header pseudo-entries (tar types `x`/`g`).
+///
+/// These carry metadata for the archive or the following entry, not a file of
+/// their own. The `tar` crate folds local (`x`) extensions into the entry they
+/// precede but still surfaces the global (`g`) header — which GitHub codeload
+/// tarballs always include — as a standalone entry named `pax_global_header`.
+/// Every walk over the entries must skip them or it will mistake that header
+/// for a real path.
+fn is_pax_meta<R: Read>(entry: &tar::Entry<'_, R>) -> bool {
+    let ty = entry.header().entry_type();
+    ty.is_pax_global_extensions() || ty.is_pax_local_extensions()
+}
+
 /// Decompress with the `gzip` CLI rather than linking a decompressor.
 ///
 /// The bytes are already digest-checked at this point, and this keeps the
@@ -196,6 +209,12 @@ fn normalize_ownership(tar: &[u8]) -> Result<Vec<u8>> {
     {
         let mut entry =
             entry.map_err(|e| VerifyError::SourceFetch(format!("bad tar entry: {e}")))?;
+        // Skip pax metadata pseudo-entries (e.g. the `pax_global_header` that
+        // GitHub codeload tarballs carry). They are not files; the tar crate has
+        // already folded any local extensions into the entries they precede.
+        if is_pax_meta(&entry) {
+            continue;
+        }
         let mut header = entry.header().clone();
         header.set_uid(BUILDER_UID);
         header.set_gid(BUILDER_UID);
@@ -240,6 +259,12 @@ pub fn single_top_dir(tar: &[u8]) -> Result<String> {
     {
         let entry =
             entry.map_err(|e| VerifyError::SourceFetch(format!("bad tar entry: {e}")))?;
+        // A `pax_global_header` (present in every GitHub codeload tarball) is
+        // metadata, not a top-level directory — counting it would spuriously
+        // trip the "exactly one top-level directory" check below.
+        if is_pax_meta(&entry) {
+            continue;
+        }
         let path = entry
             .path()
             .map_err(|e| VerifyError::SourceFetch(format!("bad tar entry path: {e}")))?;

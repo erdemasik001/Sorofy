@@ -4,4 +4,6 @@
 .env
 *.db
 *.sqlite
+# verify-core --emit-wasm writes rebuilt artifacts into the working dir.
+*.wasm
 .DS_Store
