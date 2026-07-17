@@ -1,0 +1,668 @@
+<title>Sorofy — Soroban Contract Verification (Pitch)</title>
+<style>
+  /* ============================ TOKENS ============================ */
+  :root{
+    color-scheme: dark;
+    --bg:#0c0f16;
+    --bg-2:#0f131c;
+    --panel:#141a26;
+    --panel-2:#1a2130;
+    --line:#26303f;
+    --line-soft:#1b2330;
+    --ink:#eef2f8;
+    --ink-2:#a6b2c5;
+    --ink-3:#6d7a90;
+    --accent:#5b9dff;
+    --accent-2:#8bb6ff;
+    --accent-ghost:rgba(91,157,255,.10);
+    --verified:#38d9a0;
+    --verified-ghost:rgba(56,217,160,.12);
+    --reject:#ff6f64;
+    --reject-ghost:rgba(255,111,100,.12);
+    --pending:#e7b25c;
+    --pending-ghost:rgba(231,178,92,.12);
+    --shadow:0 24px 60px -24px rgba(0,0,0,.7);
+    --mono:ui-monospace,"Cascadia Code","JetBrains Mono","SF Mono","Roboto Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  }
+  @media (prefers-color-scheme: light){
+    :root{
+      color-scheme: light;
+      --bg:#f2f5fa;
+      --bg-2:#e9edf4;
+      --panel:#ffffff;
+      --panel-2:#f6f8fc;
+      --line:#d5dce8;
+      --line-soft:#e6ebf3;
+      --ink:#131a25;
+      --ink-2:#47536a;
+      --ink-3:#7a869a;
+      --accent:#2f6fe0;
+      --accent-2:#1f57c0;
+      --accent-ghost:rgba(47,111,224,.08);
+      --verified:#0d9b6c;
+      --verified-ghost:rgba(13,155,108,.10);
+      --reject:#d6402f;
+      --reject-ghost:rgba(214,64,47,.09);
+      --pending:#b07714;
+      --pending-ghost:rgba(176,119,20,.10);
+      --shadow:0 22px 50px -26px rgba(24,40,80,.30);
+    }
+  }
+  :root[data-theme="dark"]{
+    color-scheme: dark;
+    --bg:#0c0f16;--bg-2:#0f131c;--panel:#141a26;--panel-2:#1a2130;
+    --line:#26303f;--line-soft:#1b2330;--ink:#eef2f8;--ink-2:#a6b2c5;--ink-3:#6d7a90;
+    --accent:#5b9dff;--accent-2:#8bb6ff;--accent-ghost:rgba(91,157,255,.10);
+    --verified:#38d9a0;--verified-ghost:rgba(56,217,160,.12);
+    --reject:#ff6f64;--reject-ghost:rgba(255,111,100,.12);
+    --pending:#e7b25c;--pending-ghost:rgba(231,178,92,.12);
+    --shadow:0 24px 60px -24px rgba(0,0,0,.7);
+  }
+  :root[data-theme="light"]{
+    color-scheme: light;
+    --bg:#f2f5fa;--bg-2:#e9edf4;--panel:#ffffff;--panel-2:#f6f8fc;
+    --line:#d5dce8;--line-soft:#e6ebf3;--ink:#131a25;--ink-2:#47536a;--ink-3:#7a869a;
+    --accent:#2f6fe0;--accent-2:#1f57c0;--accent-ghost:rgba(47,111,224,.08);
+    --verified:#0d9b6c;--verified-ghost:rgba(13,155,108,.10);
+    --reject:#d6402f;--reject-ghost:rgba(214,64,47,.09);
+    --pending:#b07714;--pending-ghost:rgba(176,119,20,.10);
+    --shadow:0 22px 50px -26px rgba(24,40,80,.30);
+  }
+
+  /* ============================ BASE ============================ */
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;}
+  ::selection{background:var(--accent);color:#fff;}
+
+  .deck{
+    height:100vh;height:100dvh;overflow-y:auto;overflow-x:hidden;
+    scroll-snap-type:y mandatory;scroll-behavior:smooth;
+    scrollbar-width:none;
+  }
+  .deck::-webkit-scrollbar{display:none;}
+
+  .slide{
+    min-height:100vh;min-height:100dvh;
+    scroll-snap-align:start;scroll-snap-stop:always;
+    display:flex;flex-direction:column;justify-content:center;
+    padding:clamp(2rem,5vw,5rem) clamp(1.4rem,6vw,7rem);
+    position:relative;border-bottom:1px solid var(--line-soft);
+  }
+  .slide__inner{width:100%;max-width:1080px;margin:0 auto;position:relative;z-index:2;}
+
+  /* ---- typography ---- */
+  .eyebrow{
+    font-family:var(--mono);font-size:.72rem;letter-spacing:.22em;text-transform:uppercase;
+    color:var(--accent);display:inline-flex;align-items:center;gap:.6em;margin:0 0 1.4rem;
+    font-weight:600;
+  }
+  .eyebrow::before{content:"";width:1.6rem;height:1px;background:var(--accent);opacity:.7;}
+  h1,h2,h3{margin:0;text-wrap:balance;font-family:var(--mono);font-weight:600;letter-spacing:-.02em;line-height:1.05;}
+  h2.headline{font-size:clamp(1.7rem,3.6vw,2.9rem);margin-bottom:1.1rem;}
+  .lead{font-size:clamp(1.02rem,1.5vw,1.22rem);color:var(--ink-2);line-height:1.6;max-width:62ch;margin:0 0 1.6rem;}
+  p{margin:0 0 1rem;line-height:1.6;color:var(--ink-2);}
+  strong{color:var(--ink);font-weight:600;}
+  .mono{font-family:var(--mono);}
+  code{font-family:var(--mono);font-size:.88em;background:var(--panel-2);border:1px solid var(--line-soft);
+    padding:.12em .42em;border-radius:5px;color:var(--ink);}
+  a{color:var(--accent);text-decoration:none;border-bottom:1px solid color-mix(in srgb,var(--accent) 40%,transparent);}
+  a:hover{border-bottom-color:var(--accent);}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:4px;}
+
+  .cards{display:grid;gap:1rem;}
+  .card{
+    background:var(--panel);border:1px solid var(--line);border-radius:14px;
+    padding:1.25rem 1.35rem;box-shadow:var(--shadow);
+  }
+  .card__k{font-family:var(--mono);font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--ink-3);margin:0 0 .55rem;font-weight:600;}
+  .card h3{font-size:1.05rem;margin-bottom:.5rem;letter-spacing:-.01em;}
+  .card p{font-size:.94rem;margin:0;}
+
+  /* ---- chips ---- */
+  .chips{display:flex;flex-wrap:wrap;gap:.55rem;}
+  .chip{font-family:var(--mono);font-size:.74rem;letter-spacing:.04em;padding:.4em .8em;border-radius:999px;
+    border:1px solid var(--line);background:var(--panel);color:var(--ink-2);display:inline-flex;align-items:center;gap:.45em;}
+  .chip .dot{width:.5em;height:.5em;border-radius:50%;background:var(--ink-3);}
+  .chip--ok{color:var(--verified);border-color:color-mix(in srgb,var(--verified) 45%,var(--line));background:var(--verified-ghost);}
+  .chip--ok .dot{background:var(--verified);}
+  .chip--warn{color:var(--pending);border-color:color-mix(in srgb,var(--pending) 45%,var(--line));background:var(--pending-ghost);}
+  .chip--warn .dot{background:var(--pending);}
+  .chip--acc{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 45%,var(--line));background:var(--accent-ghost);}
+  .chip--acc .dot{background:var(--accent);}
+
+  /* ============================ SLIDE 1 · TITLE ============================ */
+  .hero{align-items:flex-start;}
+  .hero__watermark{
+    position:absolute;inset:0;overflow:hidden;z-index:0;pointer-events:none;
+    font-family:var(--mono);font-size:clamp(1.1rem,3vw,2.4rem);line-height:1.9;
+    color:var(--ink);opacity:.028;word-break:break-all;letter-spacing:.05em;
+    padding:1.5rem 2rem;user-select:none;
+  }
+  @media (prefers-color-scheme:light){.hero__watermark{opacity:.05;}}
+  :root[data-theme="light"] .hero__watermark{opacity:.05;}
+  .brand{font-size:clamp(3rem,9vw,6.4rem);font-family:var(--mono);font-weight:700;letter-spacing:-.04em;
+    line-height:.95;margin:0 0 1.2rem;display:flex;align-items:baseline;gap:.15em;flex-wrap:wrap;}
+  .brand .cursor{display:inline-block;width:.5ch;height:.86em;background:var(--verified);
+    transform:translateY(.06em);animation:blink 1.15s steps(1) infinite;}
+  @keyframes blink{50%{opacity:0;}}
+  .hero__tagline{font-family:var(--sans);font-size:clamp(1.15rem,2.4vw,1.7rem);color:var(--ink);
+    font-weight:400;max-width:24ch;line-height:1.25;margin:0 0 1.5rem;letter-spacing:-.01em;}
+  .hero__sub{color:var(--ink-2);max-width:56ch;font-size:1.02rem;margin:0 0 2rem;line-height:1.6;}
+  .hero__meta{font-family:var(--mono);font-size:.76rem;color:var(--ink-3);letter-spacing:.06em;margin-top:2.2rem;}
+
+  /* ============================ PROBLEM ============================ */
+  .grid-2{display:grid;grid-template-columns:repeat(2,1fr);gap:1rem;}
+  .quote{border-left:3px solid var(--reject);padding:.2rem 0 .2rem 1.1rem;margin:0;}
+  .quote p{color:var(--ink);font-size:1.05rem;line-height:1.5;margin:0 0 .5rem;}
+  .quote cite{font-family:var(--mono);font-size:.76rem;color:var(--ink-3);font-style:normal;letter-spacing:.05em;}
+  .card--reject{border-color:color-mix(in srgb,var(--reject) 30%,var(--line));}
+  .card--reject .card__k{color:var(--reject);}
+  .parity{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:1.4rem;font-family:var(--mono);font-size:.82rem;}
+  .parity span{padding:.4em .8em;border-radius:8px;border:1px solid var(--line);background:var(--panel);}
+  .parity .no{color:var(--reject);border-color:color-mix(in srgb,var(--reject) 35%,var(--line));background:var(--reject-ghost);}
+
+  /* ============================ FLOW / PIPELINE ============================ */
+  .flow{display:flex;align-items:stretch;gap:.25rem;margin:.5rem 0 1.4rem;}
+  .stage{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:1rem .85rem;display:flex;flex-direction:column;gap:.4rem;min-width:0;}
+  .stage__n{font-family:var(--mono);font-size:.7rem;color:var(--accent);letter-spacing:.1em;font-weight:600;}
+  .stage__t{font-family:var(--mono);font-weight:600;font-size:.98rem;letter-spacing:-.01em;color:var(--ink);}
+  .stage__d{font-size:.8rem;color:var(--ink-2);line-height:1.45;}
+  .stage--build{border-color:color-mix(in srgb,var(--accent) 35%,var(--line));background:var(--accent-ghost);}
+  .stage--compare{border-color:color-mix(in srgb,var(--verified) 35%,var(--line));}
+  .flow__arrow{align-self:center;color:var(--ink-3);font-family:var(--mono);font-size:1.3rem;flex:0 0 auto;padding:0 .1rem;}
+  .flow-note{display:flex;gap:.9rem;flex-wrap:wrap;font-size:.86rem;color:var(--ink-2);}
+  .flow-note .tag{font-family:var(--mono);color:var(--ink-3);font-size:.72rem;letter-spacing:.08em;
+    text-transform:uppercase;border:1px dashed var(--line);border-radius:7px;padding:.35em .7em;white-space:nowrap;}
+
+  /* ============================ HASH MATCH (money shot) ============================ */
+  .verify-box{background:var(--panel);border:1px solid var(--line);border-radius:16px;
+    padding:1.5rem clamp(1rem,3vw,2rem);box-shadow:var(--shadow);margin:.4rem 0 1.4rem;overflow-x:auto;}
+  .hrow{display:grid;grid-template-columns:auto 1fr;gap:1.2rem;align-items:center;padding:.5rem 0;}
+  .hrow__label{font-family:var(--mono);font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--ink-3);text-align:right;white-space:nowrap;line-height:1.3;}
+  .hrow__label b{display:block;color:var(--ink-2);font-weight:600;letter-spacing:.06em;}
+  .hash{font-family:var(--mono);font-size:clamp(.62rem,1.5vw,.95rem);letter-spacing:.02em;
+    word-break:break-all;line-height:1.5;color:var(--ink-3);}
+  .hash .hc{color:var(--ink-3);transition:color .18s ease,text-shadow .18s ease;}
+  .matched .hash .hc{color:var(--verified);}
+  .matched .hash.expected .hc{text-shadow:0 0 12px var(--verified-ghost);}
+  .verify-box__foot{display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap;
+    margin-top:1rem;padding-top:1rem;border-top:1px solid var(--line-soft);}
+  .verdict{font-family:var(--mono);font-weight:700;letter-spacing:.06em;font-size:1.1rem;
+    display:inline-flex;align-items:center;gap:.5em;color:var(--ink-3);opacity:.4;transition:opacity .4s ease,color .4s ease;}
+  .matched .verdict{opacity:1;color:var(--verified);}
+  .verdict .mark{width:1.3em;height:1.3em;border-radius:50%;border:2px solid currentColor;
+    display:grid;place-items:center;font-size:.7em;}
+  .verify-box__meta{font-family:var(--mono);font-size:.76rem;color:var(--ink-3);letter-spacing:.04em;}
+
+  .prov{width:100%;border-collapse:collapse;font-size:.84rem;margin-top:.3rem;}
+  .prov th,.prov td{text-align:left;padding:.5rem .7rem;border-bottom:1px solid var(--line-soft);vertical-align:top;}
+  .prov th{font-family:var(--mono);font-size:.68rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);font-weight:600;}
+  .prov td:first-child{font-family:var(--mono);color:var(--ink);white-space:nowrap;}
+  .prov .src{font-family:var(--mono);font-size:.74rem;color:var(--ink-3);}
+  .prov .out-of-band{color:var(--pending);}
+  .prov .from-net{color:var(--accent);}
+  .prov .ok{color:var(--verified);font-weight:600;}
+
+  .footnote{font-size:.86rem;color:var(--ink-3);border-left:2px solid var(--pending);
+    padding-left:.9rem;line-height:1.55;margin-top:1rem;}
+  .footnote strong{color:var(--pending);}
+
+  /* ============================ ENFORCEMENT TABLE ============================ */
+  .enf{width:100%;border-collapse:collapse;margin:.6rem 0 1.2rem;font-size:.9rem;}
+  .enf th,.enf td{padding:.85rem 1rem;text-align:left;border-bottom:1px solid var(--line);vertical-align:top;}
+  .enf thead th{font-family:var(--mono);font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);}
+  .enf td:first-child{font-family:var(--mono);font-size:.8rem;color:var(--ink-2);word-break:break-all;}
+  .enf tr.reject{background:var(--reject-ghost);}
+  .enf tr.pass{background:var(--verified-ghost);}
+  .enf .badge{font-family:var(--mono);font-weight:700;font-size:.78rem;letter-spacing:.05em;display:inline-flex;
+    align-items:center;gap:.4em;padding:.25em .6em;border-radius:6px;}
+  .enf .badge--err{color:var(--reject);background:color-mix(in srgb,var(--reject) 16%,transparent);}
+  .enf .badge--ok{color:var(--verified);background:color-mix(in srgb,var(--verified) 16%,transparent);}
+  .digest-line{font-family:var(--mono);font-size:.8rem;color:var(--ink-2);word-break:break-all;
+    background:var(--panel-2);border:1px solid var(--line-soft);border-radius:10px;padding:.8rem 1rem;line-height:1.55;}
+  .digest-line b{color:var(--accent);font-weight:600;}
+
+  /* ============================ WHY US ============================ */
+  .why{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;}
+  .why .card{position:relative;padding-top:1.5rem;}
+  .why .rank{font-family:var(--mono);font-size:.72rem;color:var(--accent);letter-spacing:.1em;
+    border:1px solid color-mix(in srgb,var(--accent) 40%,var(--line));border-radius:6px;padding:.2em .55em;
+    background:var(--accent-ghost);display:inline-block;margin-bottom:.7rem;}
+  .why .tag-rfp{font-family:var(--mono);font-size:.68rem;color:var(--ink-3);letter-spacing:.06em;
+    text-transform:uppercase;margin-top:.7rem;display:block;}
+
+  /* ============================ ROADMAP ============================ */
+  .road{display:grid;grid-template-columns:repeat(3,1fr);gap:0;margin:.6rem 0 1.4rem;}
+  .milestone{padding:1.3rem 1.2rem;border:1px solid var(--line);border-right:none;position:relative;}
+  .milestone:last-child{border-right:1px solid var(--line);border-radius:0 12px 12px 0;}
+  .milestone:first-child{border-radius:12px 0 0 12px;}
+  .milestone--now{background:var(--verified-ghost);border-color:color-mix(in srgb,var(--verified) 35%,var(--line));z-index:2;}
+  .milestone__stage{font-family:var(--mono);font-size:.74rem;letter-spacing:.1em;color:var(--accent);font-weight:600;}
+  .milestone--now .milestone__stage{color:var(--verified);}
+  .milestone__title{font-family:var(--mono);font-weight:600;font-size:1.05rem;margin:.35rem 0 .7rem;color:var(--ink);}
+  .milestone ul{margin:0;padding-left:1.05rem;}
+  .milestone li{font-size:.85rem;color:var(--ink-2);line-height:1.5;margin-bottom:.35rem;}
+  .milestone__eta{font-family:var(--mono);font-size:.72rem;color:var(--ink-3);margin-top:.8rem;letter-spacing:.04em;}
+  .fund{font-size:.88rem;color:var(--ink-2);font-family:var(--sans);}
+  .fund b{font-family:var(--mono);color:var(--ink);}
+
+  /* ============================ HONEST STATUS ============================ */
+  .honest{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin:.4rem 0 1.4rem;}
+  .col{border:1px solid var(--line);border-radius:14px;padding:1.3rem 1.4rem;background:var(--panel);}
+  .col--real{border-color:color-mix(in srgb,var(--verified) 30%,var(--line));}
+  .col--deferred{border-color:color-mix(in srgb,var(--pending) 30%,var(--line));}
+  .col__h{font-family:var(--mono);font-size:.76rem;letter-spacing:.12em;text-transform:uppercase;
+    font-weight:600;margin:0 0 1rem;display:flex;align-items:center;gap:.5em;}
+  .col--real .col__h{color:var(--verified);}
+  .col--deferred .col__h{color:var(--pending);}
+  .col ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.7rem;}
+  .col li{font-size:.9rem;line-height:1.5;color:var(--ink-2);padding-left:1.5rem;position:relative;}
+  .col li b{color:var(--ink);font-weight:600;}
+  .col--real li::before{content:"✓";position:absolute;left:0;color:var(--verified);font-family:var(--mono);font-weight:700;}
+  .col--deferred li::before{content:"›";position:absolute;left:.15rem;color:var(--pending);font-family:var(--mono);font-weight:700;font-size:1.1em;line-height:1;}
+  .closer{font-family:var(--mono);font-size:clamp(1rem,2vw,1.3rem);color:var(--ink);line-height:1.5;
+    text-wrap:balance;border-top:1px solid var(--line);padding-top:1.4rem;}
+  .closer b.ok{color:var(--verified);}
+  .repo{font-family:var(--mono);font-size:.85rem;margin-top:1rem;color:var(--ink-2);}
+
+  /* ============================ CHROME (rail, counter, hint) ============================ */
+  .rail{position:fixed;right:1.4rem;top:50%;transform:translateY(-50%);z-index:50;
+    display:flex;flex-direction:column;gap:.7rem;}
+  .rail button{width:10px;height:10px;padding:0;border-radius:50%;border:1px solid var(--ink-3);
+    background:transparent;cursor:pointer;transition:all .25s ease;}
+  .rail button:hover{border-color:var(--accent);transform:scale(1.2);}
+  .rail button[aria-current="true"]{background:var(--accent);border-color:var(--accent);height:22px;border-radius:6px;}
+  .counter{position:fixed;left:clamp(1.1rem,4vw,3rem);top:clamp(1.1rem,4vw,2.2rem);z-index:50;
+    font-family:var(--mono);font-size:.78rem;letter-spacing:.1em;color:var(--ink-3);}
+  .counter b{color:var(--ink);}
+  .brandmark{position:fixed;right:clamp(1.1rem,4vw,3rem);top:clamp(1.1rem,4vw,2.2rem);z-index:50;
+    font-family:var(--mono);font-size:.78rem;letter-spacing:.14em;color:var(--ink-3);font-weight:600;text-transform:lowercase;}
+  .brandmark .v{color:var(--verified);}
+  .hint{position:fixed;left:50%;bottom:1.2rem;transform:translateX(-50%);z-index:50;
+    font-family:var(--mono);font-size:.7rem;letter-spacing:.08em;color:var(--ink-3);
+    display:flex;align-items:center;gap:.5em;opacity:.85;transition:opacity .5s ease;}
+  .hint kbd{border:1px solid var(--line);border-radius:5px;padding:.1em .45em;background:var(--panel);color:var(--ink-2);font-family:var(--mono);}
+  .hint.gone{opacity:0;pointer-events:none;}
+
+  /* ============================ RESPONSIVE ============================ */
+  @media (max-width:820px){
+    .deck{scroll-snap-type:y proximity;}
+    .slide{min-height:auto;padding-top:5.5rem;padding-bottom:4rem;}
+    .grid-2,.why,.honest{grid-template-columns:1fr;}
+    .flow{flex-direction:column;}
+    .flow__arrow{transform:rotate(90deg);padding:.15rem 0;}
+    .road{grid-template-columns:1fr;}
+    .milestone{border-right:1px solid var(--line);border-bottom:none;}
+    .milestone:first-child{border-radius:12px 12px 0 0;}
+    .milestone:last-child{border-radius:0 0 12px 12px;border-bottom:1px solid var(--line);}
+    .rail{display:none;}
+    .hrow{grid-template-columns:1fr;gap:.3rem;}
+    .hrow__label{text-align:left;}
+    .hint{display:none;}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *{animation:none !important;scroll-behavior:auto !important;}
+    .hash .hc{transition:none !important;}
+    .verdict{transition:none !important;}
+  }
+  @media print{
+    .deck{height:auto;overflow:visible;scroll-snap-type:none;}
+    .slide{min-height:auto;page-break-after:always;border:none;}
+    .rail,.hint,.counter,.brandmark{display:none;}
+  }
+</style>
+
+<div class="counter"><b id="cnum">01</b> / 08</div>
+<div class="brandmark">soro<span class="v">fy</span></div>
+
+<nav class="rail" id="rail" aria-label="Slide navigation"></nav>
+
+<div class="hint" id="hint"><kbd>↓</kbd> or <kbd>Space</kbd> to advance</div>
+
+<main class="deck" id="deck">
+
+  <!-- ==================== SLIDE 1 · TITLE ==================== -->
+  <section class="slide hero" id="s1" aria-label="Title">
+    <div class="hero__watermark" aria-hidden="true">47d2801e115f9a064fe37a8244ef1ffcfa56877668a17f383d3189634a1bcfbd 1cde007365bb93f6dae9b6f2e42b0bf29364c44fa031399116a6cfafa4ede416 cff44167d2ee90f901c768ccdb75eb5c382c95295f44bcd7ee4b543f0adf9588 47d2801e115f9a064fe37a8244ef1ffcfa56877668a17f383d3189634a1bcfbd 1cde007365bb93f6dae9b6f2e42b0bf29364c44fa031399116a6cfafa4ede416 cff44167d2ee90f901c768ccdb75eb5c382c95295f44bcd7ee4b543f0adf9588 47d2801e115f9a064fe37a8244ef1ffcfa56877668a17f383d3189634a1bcfbd 1cde007365bb93f6dae9b6f2e42b0bf29364c44fa031399116a6cfafa4ede416</div>
+    <div class="slide__inner">
+      <p class="eyebrow">Soroban Contract Verification</p>
+      <div class="brand">Sorofy<span class="cursor" aria-hidden="true"></span></div>
+      <p class="hero__tagline">Proof that on-chain bytecode came from the source you can read.</p>
+      <p class="hero__sub">A deployed Soroban contract is opaque bytes. Sorofy rebuilds it from source in a deterministic, digest-pinned sandbox and byte-compares the result against the network's own hash — then serves that verdict through a free, KYC-free API.</p>
+      <div class="chips">
+        <span class="chip chip--ok"><span class="dot"></span>Retroactive path proven</span>
+        <span class="chip chip--acc"><span class="dot"></span>Testnet MVP</span>
+        <span class="chip"><span class="dot"></span>Rust · Axum · Docker</span>
+        <span class="chip"><span class="dot"></span>Open source · MIT</span>
+      </div>
+      <p class="hero__meta">SCF RFP — Contract Source Verification Service · hackathon MVP</p>
+    </div>
+  </section>
+
+  <!-- ==================== SLIDE 2 · PROBLEM ==================== -->
+  <section class="slide" id="s2" aria-label="The problem">
+    <div class="slide__inner">
+      <p class="eyebrow">01 · The problem</p>
+      <h2 class="headline">On Soroban, deployed bytecode is opaque.</h2>
+      <p class="lead">When a contract is deployed, all that lives on-chain is bytes. There is <strong>no programmatic way</strong> to confirm that the source an explorer shows actually compiles to those bytes.</p>
+      <div class="grid-2">
+        <div class="card card--reject">
+          <p class="card__k">What already went wrong</p>
+          <p>Stellar Lab <strong>removed its source-code tab</strong> after a malicious WASM was shown receiving a "build verified" badge. Showing unproven source is worse than showing none.</p>
+        </div>
+        <div class="card card--reject">
+          <p class="card__k">Why SEP-55 isn't enough</p>
+          <p>SEP-55 uses CI attestations to prove <strong>provenance</strong> — "a CI ran at this commit." That CI can fetch external code or swap dependencies. It never proves source&nbsp;→&nbsp;bytecode.</p>
+        </div>
+      </div>
+      <blockquote class="quote">
+        <p>SEP-55 gives "a false sense of security."</p>
+        <cite>— OrbitLens, StellarExpert</cite>
+      </blockquote>
+      <div class="parity" aria-label="Ecosystem parity">
+        <span>Ethereum → Etherscan / Sourcify</span>
+        <span>Solana → verified-builds</span>
+        <span class="no">Soroban → no production-grade equivalent</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== SLIDE 3 · SOLUTION + ARCHITECTURE ==================== -->
+  <section class="slide" id="s3" aria-label="The solution">
+    <div class="slide__inner">
+      <p class="eyebrow">02 · The solution</p>
+      <h2 class="headline">Don't trust the source — rebuild it.</h2>
+      <p class="lead">Rebuild the contract from source in an isolated, digest-pinned container, byte-compare the sha256 against the on-chain hash, cache the verdict, and serve it cheaply. Compute once; every explorer, wallet and CLI just queries.</p>
+      <div class="flow" role="list">
+        <div class="stage" role="listitem">
+          <span class="stage__n">01 SUBMIT</span>
+          <span class="stage__t">Source + ID</span>
+          <span class="stage__d">Git commit or SEP-58 archive + <code>contract_id</code>.</span>
+        </div>
+        <span class="flow__arrow" aria-hidden="true">→</span>
+        <div class="stage" role="listitem">
+          <span class="stage__n">02 RESOLVE</span>
+          <span class="stage__t">Ask the chain</span>
+          <span class="stage__d">Soroban RPC → on-chain WASM hash. The caller never picks the answer.</span>
+        </div>
+        <span class="flow__arrow" aria-hidden="true">→</span>
+        <div class="stage stage--build" role="listitem">
+          <span class="stage__n">03 REBUILD</span>
+          <span class="stage__t">Sandbox</span>
+          <span class="stage__d">Digest-pinned Docker; compile phase runs <code>--network=none</code>.</span>
+        </div>
+        <span class="flow__arrow" aria-hidden="true">→</span>
+        <div class="stage stage--compare" role="listitem">
+          <span class="stage__n">04 COMPARE</span>
+          <span class="stage__t">sha256 match</span>
+          <span class="stage__d">rebuilt == on-chain, byte for byte.</span>
+        </div>
+        <span class="flow__arrow" aria-hidden="true">→</span>
+        <div class="stage" role="listitem">
+          <span class="stage__n">05 SERVE</span>
+          <span class="stage__t">Cache + API</span>
+          <span class="stage__d">verified / mismatch + trust_level, cached in SQLite.</span>
+        </div>
+      </div>
+      <div class="flow-note">
+        <span class="tag">SEP-58 = vocabulary</span>
+        <span>SDF's SEP-58 defines the metadata to reproduce a WASM (<code>bldimg</code>, <code>source_uri</code>, <code>source_sha256</code>). The <strong>service, sandbox and integration layer are this project's job</strong> — consumed by Explorer · Wallet · Lab · stellar-cli.</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== SLIDE 4 · RETROACTIVE DEMO (money shot) ==================== -->
+  <section class="slide" id="s4" aria-label="Retroactive verification demo">
+    <div class="slide__inner">
+      <p class="eyebrow">03 · Proven end-to-end · Testnet</p>
+      <h2 class="headline">The retroactive path — the claim the project exists for.</h2>
+      <p class="lead">Contract <code>CAZAVVTM…</code> carries <strong>zero SEP-58 source metadata</strong> on-chain. We supply its source out-of-band as an archive; the network resolves the target hash. The submitter can only offer a candidate — the chain decides whether it reproduces.</p>
+
+      <div class="verify-box" id="verifybox">
+        <div class="hrow">
+          <div class="hrow__label"><b>Expected</b>from network (RPC)</div>
+          <div class="hash expected" data-hash="47d2801e115f9a064fe37a8244ef1ffcfa56877668a17f383d3189634a1bcfbd"></div>
+        </div>
+        <div class="hrow">
+          <div class="hrow__label"><b>Rebuilt</b>our container</div>
+          <div class="hash rebuilt" data-hash="47d2801e115f9a064fe37a8244ef1ffcfa56877668a17f383d3189634a1bcfbd"></div>
+        </div>
+        <div class="verify-box__foot">
+          <span class="verdict"><span class="mark">✓</span>VERIFIED · byte-for-byte</span>
+          <span class="verify-box__meta">8 584 B · build 62.5 s · no wasm_hash from caller</span>
+        </div>
+      </div>
+
+      <table class="prov">
+        <thead><tr><th>Field</th><th>Value</th><th>Where it came from</th></tr></thead>
+        <tbody>
+          <tr><td>source_sha256</td><td class="src">1cde0073…</td><td class="out-of-band">out-of-band archive — not on-chain</td></tr>
+          <tr><td>expected</td><td class="src">47d2801e…</td><td class="from-net">resolved from the network (getLedgerEntries)</td></tr>
+          <tr><td>rebuilt</td><td class="src">47d2801e…</td><td>our containerized rebuild</td></tr>
+          <tr><td>result</td><td class="ok">verified</td><td>the contract contributed no verification metadata</td></tr>
+        </tbody>
+      </table>
+
+      <p class="footnote"><strong>Honest scope:</strong> this proves the <strong>engine</strong>. Day0's <code>CDZZZTN6…</code> stays the stretch target — its source is genuinely unknown, so that's a <em>sourcing</em> problem, not an engine problem.</p>
+    </div>
+  </section>
+
+  <!-- ==================== SLIDE 5 · ENFORCEMENT ==================== -->
+  <section class="slide" id="s5" aria-label="Digest enforcement">
+    <div class="slide__inner">
+      <p class="eyebrow">04 · Real enforcement, not a flag</p>
+      <h2 class="headline">The build image is pinned to a registry digest.</h2>
+      <p class="lead">For two independent verifiers to agree, they must pull <em>byte-identical</em> build tooling. So a bare tag is refused before any container starts — the image must resolve to a single-arch manifest digest.</p>
+
+      <table class="enf">
+        <thead><tr><th>bldimg submitted</th><th>Outcome</th></tr></thead>
+        <tbody>
+          <tr class="reject">
+            <td>sorofy/build-image:rust1.91.1-cli23.2.1 <em>(bare tag)</em></td>
+            <td><span class="badge badge--err">✕ error</span> — "build image must be digest-pinned", rejected before any container</td>
+          </tr>
+          <tr class="pass">
+            <td>ghcr.io/…/sorofy-build-image@sha256:cff44167…</td>
+            <td><span class="badge badge--ok">✓ verified</span> — 48.7 s, rebuilt == expected == 47d2801e…</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="digest-line">Published, single-arch → one manifest digest:<br>
+        ghcr.io/erdemasik001/sorofy-build-image@<b>sha256:cff44167d2ee90f901c768ccdb75eb5c382c95295f44bcd7ee4b543f0adf9588</b></div>
+
+      <p class="footnote" style="border-left-color:var(--verified);"><strong style="color:var(--verified);">Why it matters:</strong> a shared digest is the precondition for the multi-verifier model — the same <code>bldimg</code> guarantees the same bytes, so disagreement between verifiers means a real discrepancy, not a toolchain drift.</p>
+    </div>
+  </section>
+
+  <!-- ==================== SLIDE 6 · WHY US ==================== -->
+  <section class="slide" id="s6" aria-label="Why us">
+    <div class="slide__inner">
+      <p class="eyebrow">05 · Why us</p>
+      <h2 class="headline">The RFP's three hardest requirements are where competitors do least.</h2>
+      <p class="lead">The gap is open: no production-grade, multi-verifier, open-source service exists yet. We differentiate exactly on the parts everyone else skips.</p>
+      <div class="why">
+        <div class="card">
+          <span class="rank">01</span>
+          <h3>Decentralization</h3>
+          <p>Independent verifiers publish results and surface disagreement. "A single hardcoded verifier does not meet the bar."</p>
+          <span class="tag-rfp">RFP · hard requirement</span>
+        </div>
+        <div class="card">
+          <span class="rank">02</span>
+          <h3>Retroactive verification</h3>
+          <p>An off-chain registry for pre-SEP-58 contracts that can't embed metadata. Highest-value, most-skipped — and already proven at the engine level.</p>
+          <span class="tag-rfp">RFP · priority requirement</span>
+        </div>
+        <div class="card">
+          <span class="rank">03</span>
+          <h3>Trust levels, not a binary</h3>
+          <p>Not just verified/unverified: image trust tiers — <code>arbitrary</code> / <code>publicly-auditable</code> / <code>sdf-maintained</code> — plus a vetted image allowlist.</p>
+          <span class="tag-rfp">Beyond the RFP baseline</span>
+        </div>
+      </div>
+      <p style="margin-top:1.4rem;font-size:.9rem;color:var(--ink-3);font-family:var(--mono);">Closest competitor to watch: <strong style="color:var(--ink-2);">SoroSeal</strong> (deterministic build + registry). StellarExpert has provenance but no source→bytecode; SDF's verifier is marked "do not use in production."</p>
+    </div>
+  </section>
+
+  <!-- ==================== SLIDE 7 · ROADMAP ==================== -->
+  <section class="slide" id="s7" aria-label="Roadmap">
+    <div class="slide__inner">
+      <p class="eyebrow">06 · Roadmap</p>
+      <h2 class="headline">From a working engine to the canonical verifier.</h2>
+      <div class="road">
+        <div class="milestone milestone--now">
+          <span class="milestone__stage">M1 · MVP — this deck</span>
+          <div class="milestone__title">Testnet verifier</div>
+          <ul>
+            <li>Deterministic Docker reproduction</li>
+            <li>Public REST API + SQLite cache</li>
+            <li>Retroactive path proven end-to-end</li>
+          </ul>
+          <div class="milestone__eta">done</div>
+        </div>
+        <div class="milestone">
+          <span class="milestone__stage">M2 · Testnet</span>
+          <div class="milestone__title">Decentralize</div>
+          <ul>
+            <li>Multiple independent verifiers</li>
+            <li>Retroactive registry for pre-SEP-58 contracts</li>
+            <li>Surface disagreement between verifiers</li>
+          </ul>
+          <div class="milestone__eta">+4–6 weeks</div>
+        </div>
+        <div class="milestone">
+          <span class="milestone__stage">M3 · Mainnet</span>
+          <div class="milestone__title">Ship + integrate</div>
+          <ul>
+            <li>Audit Bank review → production</li>
+            <li>≥1 reference integration (ideally Stellar Lab)</li>
+            <li>Mainnet + trust allowlist</li>
+          </ul>
+          <div class="milestone__eta">+4–8 weeks</div>
+        </div>
+      </div>
+      <p class="fund">Directly funded by the SCF <b>Contract Source Verification Service</b> RFP — Build Award cap <b>$150K XLM</b>, tranches <b>10 / 20 / 30 / 40</b> at acceptance / MVP / testnet / mainnet.</p>
+    </div>
+  </section>
+
+  <!-- ==================== SLIDE 8 · HONEST STATUS + CLOSE ==================== -->
+  <section class="slide" id="s8" aria-label="Honest status">
+    <div class="slide__inner">
+      <p class="eyebrow">07 · Honest status</p>
+      <h2 class="headline">What's real, and what's deferred.</h2>
+      <div class="honest">
+        <div class="col col--real">
+          <p class="col__h">Real &amp; proven</p>
+          <ul>
+            <li><b>Retroactive verify</b> byte-for-byte against the on-chain hash</li>
+            <li><b>Digest enforcement with teeth</b> — bare tags rejected before any container</li>
+            <li><b>Published GHCR image</b> (single-arch, <code>cff44167…</code>)</li>
+            <li><b>Cache survives restarts</b> (SQLite-backed)</li>
+            <li><b>Deploy artifacts ready</b> — Dockerfile (618 MB, build-verified), fly.toml, .dockerignore</li>
+          </ul>
+        </div>
+        <div class="col col--deferred">
+          <p class="col__h">Deliberately deferred</p>
+          <ul>
+            <li><b>No live public URL</b> — Fly.io now needs a card + ~$5/mo and a reachable Docker daemon; the VPS path is one <code>docker run</code> away</li>
+            <li><b>No auth / rate-limiting</b> — mandatory before exposing the socket-mounted service; first hardening item</li>
+            <li><b>trust_level hardcoded <code>arbitrary</code></b> — the allowlist / multi-verifier surface (M2) is where the other tiers come from</li>
+            <li><b>Single verifier</b> — decentralization is architected for, not yet built</li>
+          </ul>
+        </div>
+      </div>
+      <p class="closer">The engine is <b class="ok">done</b>. The differentiation is designed. The path to mainnet is costed — and every number on these slides is a real run, not a mockup.</p>
+      <p class="repo">github.com/erdemasik001 · <span style="color:var(--ink-3)">Sorofy — Soroban Contract Verification · MIT</span></p>
+    </div>
+  </section>
+
+</main>
+
+<script>
+(function(){
+  "use strict";
+  var deck = document.getElementById('deck');
+  var slides = Array.prototype.slice.call(deck.querySelectorAll('.slide'));
+  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* ---- build the hash characters as spans (for the sweep) ---- */
+  Array.prototype.slice.call(document.querySelectorAll('.hash')).forEach(function(el){
+    var h = el.getAttribute('data-hash') || '';
+    var frag = document.createDocumentFragment();
+    for(var i=0;i<h.length;i++){
+      var s = document.createElement('span');
+      s.className='hc';
+      s.textContent=h[i];
+      if(!reduce){ s.style.transitionDelay = (i*11)+'ms'; }
+      frag.appendChild(s);
+    }
+    el.appendChild(frag);
+  });
+
+  /* ---- progress rail ---- */
+  var rail = document.getElementById('rail');
+  var cnum = document.getElementById('cnum');
+  var dots = slides.map(function(s,i){
+    var b = document.createElement('button');
+    b.setAttribute('aria-label','Go to slide '+(i+1));
+    b.addEventListener('click',function(){ s.scrollIntoView({behavior: reduce?'auto':'smooth'}); });
+    rail.appendChild(b);
+    return b;
+  });
+
+  function setActive(i){
+    dots.forEach(function(d,j){ d.setAttribute('aria-current', j===i ? 'true':'false'); });
+    cnum.textContent = ('0'+(i+1)).slice(-2);
+  }
+
+  /* ---- observe which slide is centered ---- */
+  var io = new IntersectionObserver(function(entries){
+    entries.forEach(function(e){
+      if(e.isIntersecting && e.intersectionRatio >= 0.5){
+        var i = slides.indexOf(e.target);
+        if(i>=0) setActive(i);
+        /* trigger the hash match when the demo slide lands */
+        if(e.target.id==='s4'){ document.getElementById('verifybox').classList.add('matched'); }
+      }
+    });
+  }, {root:deck, threshold:[0.5]});
+  slides.forEach(function(s){ io.observe(s); });
+  setActive(0);
+
+  /* if reduced-motion, show the match immediately */
+  if(reduce){ document.getElementById('verifybox').classList.add('matched'); }
+
+  /* ---- keyboard navigation ---- */
+  function current(){
+    var mid = deck.scrollTop + deck.clientHeight/2;
+    for(var i=0;i<slides.length;i++){
+      if(slides[i].offsetTop <= mid && slides[i].offsetTop + slides[i].offsetHeight > mid) return i;
+    }
+    return 0;
+  }
+  function go(i){
+    i = Math.max(0, Math.min(slides.length-1, i));
+    slides[i].scrollIntoView({behavior: reduce?'auto':'smooth'});
+  }
+  document.addEventListener('keydown', function(ev){
+    var k = ev.key;
+    if(k==='ArrowDown'||k==='PageDown'||k===' '){ ev.preventDefault(); go(current()+1); hideHint(); }
+    else if(k==='ArrowUp'||k==='PageUp'){ ev.preventDefault(); go(current()-1); }
+    else if(k==='Home'){ ev.preventDefault(); go(0); }
+    else if(k==='End'){ ev.preventDefault(); go(slides.length-1); }
+  });
+
+  /* ---- dismiss the hint after first move ---- */
+  var hint = document.getElementById('hint');
+  var hintGone = false;
+  function hideHint(){ if(!hintGone){ hint.classList.add('gone'); hintGone=true; } }
+  deck.addEventListener('scroll', function(){ if(deck.scrollTop>40) hideHint(); }, {passive:true});
+  setTimeout(hideHint, 6000);
+})();
+</script>
