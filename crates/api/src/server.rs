@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -30,16 +30,26 @@ pub struct AppState {
     pub rpc_url: String,
     /// Accept tags without digests (local dev; SEP-58 wants digests).
     pub allow_unpinned_image: bool,
+    /// Bearer token required on `POST /verify`. `None` disables auth (local dev);
+    /// `main` warns loudly at startup when it is unset.
+    pub api_token: Option<String>,
     build_slots: Arc<Semaphore>,
 }
 
 impl AppState {
-    pub fn new(db: Db, docker: Docker, rpc_url: String, allow_unpinned_image: bool) -> Self {
+    pub fn new(
+        db: Db,
+        docker: Docker,
+        rpc_url: String,
+        allow_unpinned_image: bool,
+        api_token: Option<String>,
+    ) -> Self {
         AppState {
             db,
             docker: Arc::new(docker),
             rpc_url,
             allow_unpinned_image,
+            api_token,
             build_slots: Arc::new(Semaphore::new(MAX_CONCURRENT_BUILDS)),
         }
     }
@@ -81,8 +91,9 @@ pub struct VerifyRequest {
     pub bldopt: Vec<String>,
 }
 
-/// A caller mistake, reported as 400/404/422 with a reason.
+/// A caller mistake, reported as 400/401/404/500 with a reason.
 enum ApiError {
+    Unauthorized,
     BadRequest(String),
     NotFound(String),
     Internal(anyhow::Error),
@@ -91,6 +102,10 @@ enum ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (code, msg) = match self {
+            ApiError::Unauthorized => (
+                StatusCode::UNAUTHORIZED,
+                "missing or invalid bearer token".to_string(),
+            ),
             ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
             ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
             ApiError::Internal(err) => {
@@ -120,8 +135,16 @@ async fn index() -> Json<serde_json::Value> {
 
 async fn start_verification(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<VerifyRequest>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    // POST spends build capacity and drives the socket-mounted daemon, so it is
+    // gated (docs/security.md, G2). GET stays public — a cheap cached read is the
+    // whole point of the service.
+    if !is_authorized(state.api_token.as_deref(), &headers) {
+        return Err(ApiError::Unauthorized);
+    }
+
     let source = parse_source(&req)?;
 
     // Resolve the target hash. With a contract_id the network is the authority;
@@ -186,6 +209,45 @@ async fn start_verification(
             "wasm_hash": expected_hash,
         })),
     ))
+}
+
+/// Whether a request carries the configured bearer token.
+///
+/// `expected == None` means auth is disabled (local dev). Otherwise the
+/// `Authorization: Bearer <token>` value must match, compared in constant time so
+/// a wrong token can't be recovered byte-by-byte from response timing.
+fn is_authorized(expected: Option<&str>, headers: &HeaderMap) -> bool {
+    let Some(expected) = expected else {
+        return true;
+    };
+    let provided = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| {
+            let mut parts = s.splitn(2, ' ');
+            match (parts.next(), parts.next()) {
+                (Some(scheme), Some(tok)) if scheme.eq_ignore_ascii_case("bearer") => {
+                    Some(tok.trim())
+                }
+                _ => None,
+            }
+        })
+        .unwrap_or("");
+    constant_time_eq(provided.as_bytes(), expected.as_bytes())
+}
+
+/// Length-then-content equality that does not short-circuit on the first
+/// differing byte. The length comparison leaks length, which is acceptable for a
+/// bearer token.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 /// Exactly one source shape must be present.
@@ -259,6 +321,58 @@ async fn get_verification(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn headers_with_auth(value: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert(axum::http::header::AUTHORIZATION, value.parse().unwrap());
+        h
+    }
+
+    #[test]
+    fn auth_disabled_when_no_token_configured() {
+        // No configured token → open (local dev). main warns at startup.
+        assert!(is_authorized(None, &HeaderMap::new()));
+        assert!(is_authorized(None, &headers_with_auth("Bearer anything")));
+    }
+
+    #[test]
+    fn auth_accepts_the_correct_bearer_token() {
+        assert!(is_authorized(
+            Some("s3cret"),
+            &headers_with_auth("Bearer s3cret")
+        ));
+        // Scheme is case-insensitive (RFC 6750).
+        assert!(is_authorized(
+            Some("s3cret"),
+            &headers_with_auth("bearer s3cret")
+        ));
+    }
+
+    #[test]
+    fn auth_rejects_wrong_missing_or_malformed_tokens() {
+        assert!(!is_authorized(
+            Some("s3cret"),
+            &headers_with_auth("Bearer nope")
+        ));
+        assert!(!is_authorized(Some("s3cret"), &HeaderMap::new())); // no header
+        assert!(!is_authorized(Some("s3cret"), &headers_with_auth("s3cret"))); // no scheme
+        assert!(!is_authorized(
+            Some("s3cret"),
+            &headers_with_auth("Basic s3cret")
+        ));
+        assert!(!is_authorized(
+            Some("s3cret"),
+            &headers_with_auth("Bearer ")
+        )); // empty token
+    }
+
+    #[test]
+    fn constant_time_eq_matches_only_identical_byte_strings() {
+        assert!(constant_time_eq(b"abc", b"abc"));
+        assert!(constant_time_eq(b"", b""));
+        assert!(!constant_time_eq(b"abc", b"abd"));
+        assert!(!constant_time_eq(b"abc", b"ab")); // length differs
+    }
 
     /// A minimal `VerifyRequest` with only `bldimg` set; each test fills in the
     /// source fields it exercises. Keeps the source-selection cases readable.
