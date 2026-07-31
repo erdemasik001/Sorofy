@@ -13,6 +13,11 @@ name: Integration
 on:
   push:
     branches: [master]
+    # Docs-only pushes cannot change what these tests exercise, so skip the heavy
+    # lane (real builds + RPC) for them; any code/config change still runs it.
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
   workflow_dispatch:
 
 concurrency:
@@ -34,7 +39,7 @@ jobs:
     # build or an unreachable endpoint fails the lane instead of running forever.
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust 1.91.1
         run: |
