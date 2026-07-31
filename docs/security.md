@@ -249,3 +249,13 @@ These were checked and are correct; do **not** "fix" them:
 - Every "proven" claim in the day-docs was re-verified live (on-chain hashes via RPC,
   the GHCR digest via anonymous pull, fixture reachability, the retroactive tarball
   sha256) and all held exactly.
+
+### Post-fix live verification — G1 + G6
+The new hardening flags were confirmed against a *real* containerized build, not only
+by unit-testing arg construction: `reproduce_integration::verified_correct_source_and_hash`
+reproduced the fixture's on-chain WASM byte-for-byte (`b68602…62bf5f5b`, 660 B) with
+`--memory-swap 3g`, `--cap-drop=ALL`, and `--security-opt=no-new-privileges` applied to
+both the fetch and build containers (Docker 29.6.2 via WSL2). A daemon that rejected any
+flag would fail `docker create`; the exact-hash match proves the hardening does not
+perturb the build. Disk quota (`--storage-opt size=`) stays off in `BUILD_LIMITS` per the
+G1 note and so is not exercised here.
