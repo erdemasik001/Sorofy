@@ -1,0 +1,57 @@
+# Integration lane: the `#[ignore]`d tests the offline `ci.yml` gate skips —
+# real Docker builds, the published build image, GitHub/crates.io fetches, and
+# public testnet RPC (crates/verifier-core/tests, crates/api/tests).
+#
+# Kept separate from the offline gate on purpose: it depends on external infra
+# (a Docker daemon, GHCR, github.com, crates.io, the Soroban testnet RPC), so it
+# must not gate the fast fmt/clippy/build/test lane every PR runs. It runs on
+# merges to master and on demand — not on every PR — to keep PR CI quick and to
+# isolate external flakiness from the blocking gate.
+
+name: Integration
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: integration-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # The published build image (docs/day3-deploy-demo.md). The integration tests
+  # read BLDIMG; without it they default to a local-only tag that does not exist
+  # on a CI runner. They run with allow_unpinned_image, so a tag is fine here.
+  BLDIMG: ghcr.io/erdemasik001/sorofy-build-image:rust1.91.1-cli23.2.1
+
+jobs:
+  integration:
+    name: ignored Docker/RPC tests
+    runs-on: ubuntu-latest
+    # A handful of real container builds plus testnet RPC; bounded so a hung
+    # build or an unreachable endpoint fails the lane instead of running forever.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust 1.91.1
+        run: |
+          rustup toolchain install 1.91.1 --profile minimal
+          rustup default 1.91.1
+          rustc --version
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+
+      # ubuntu-latest ships a running Docker daemon; Docker::autodetect uses it
+      # directly on Linux. Pre-pull the build image so a pull failure surfaces
+      # here, not mid-test.
+      - name: Pull the pinned build image
+        run: docker pull "$BLDIMG"
+
+      # `-- --ignored` runs ONLY the ignored suite; the offline gate already
+      # covers the normal tests, so the two lanes do not overlap.
+      - name: Integration tests (Docker + RPC)
+        run: cargo test --workspace -- --ignored
