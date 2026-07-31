@@ -226,7 +226,10 @@ TOCTOU. **Undocumented residuals found in review:**
   attacker-controlled `Cargo.toml`/`Cargo.lock` name — internal addresses and the
   metadata endpoint included. No user code runs during fetch, so this is blind SSRF,
   but it is a real egress vector G4 never modelled. Needs an egress-filtered network
-  or an allowlisting proxy for the fetch phase.
+  or an allowlisting proxy for the fetch phase. **Design decided in
+  [ADR-0001](adr/0001-fetch-egress-control.md):** egress-filtered dedicated fetch
+  network (host firewall on internal ranges) for testnet, keeping the app-layer guard;
+  allowlist proxy deferred to multi-tenant/M2. Implementation is deploy-coupled (0.7).
 
 ### G6 — container hardening: closed
 The build/fetch containers run non-root (good) under the daemon's default seccomp
