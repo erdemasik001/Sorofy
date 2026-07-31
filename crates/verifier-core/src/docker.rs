@@ -181,6 +181,22 @@ pub struct ResourceLimits<'a> {
     pub storage_opt_size: Option<&'a str>,
 }
 
+/// Container hardening flags. A `false` field emits nothing.
+///
+/// Distinct from [`ResourceLimits`] (cgroup *amounts*): these harden the
+/// container's *privileges*. Set on a sandbox that compiles untrusted code so a
+/// `build.rs` cannot lean on Linux capabilities or gain privileges via setuid
+/// (docs/security.md, G6). Read-only rootfs is a further follow-up that would
+/// live here.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SecurityOpts {
+    /// `--cap-drop=ALL`: drop every Linux capability. A compile needs none.
+    pub cap_drop_all: bool,
+    /// `--security-opt=no-new-privileges`: block gaining privileges through a
+    /// setuid/setgid binary. The build already runs non-root (uid 1000).
+    pub no_new_privileges: bool,
+}
+
 /// What to create a build container from.
 pub struct ContainerSpec<'a> {
     pub image: &'a str,
@@ -194,6 +210,8 @@ pub struct ContainerSpec<'a> {
     pub network: Network,
     /// cgroup caps for the container (memory/CPU/PIDs).
     pub limits: ResourceLimits<'a>,
+    /// Capability/privilege hardening for the container.
+    pub security: SecurityOpts,
 }
 
 /// Build the `docker create ...` argument vector for a spec.
@@ -205,6 +223,15 @@ fn create_args(spec: &ContainerSpec<'_>) -> Vec<String> {
     let mut args: Vec<String> = vec!["create".into()];
     if spec.network == Network::None {
         args.push("--network=none".into());
+    }
+    // Privilege hardening (docs/security.md, G6): a sandbox that compiles
+    // untrusted code needs no capabilities and must not let a setuid binary
+    // escalate. Emitted next to --network as they are the same isolation posture.
+    if spec.security.cap_drop_all {
+        args.push("--cap-drop=ALL".into());
+    }
+    if spec.security.no_new_privileges {
+        args.push("--security-opt=no-new-privileges".into());
     }
     // Resource caps first: a build compiles and runs untrusted code, so bound
     // what one job can take from the host.
@@ -415,6 +442,10 @@ mod tests {
                 pids: Some(2048),
                 storage_opt_size: Some("10g"),
             },
+            security: SecurityOpts {
+                cap_drop_all: true,
+                no_new_privileges: true,
+            },
         };
         let args = create_args(&spec);
         let joined = args.join(" ");
@@ -429,6 +460,12 @@ mod tests {
         assert!(joined.contains("--pids-limit 2048"), "{joined}");
         // Disk quota on the writable layer, when a quota-capable driver allows it.
         assert!(joined.contains("--storage-opt size=10g"), "{joined}");
+        // Privilege hardening: no capabilities, no setuid escalation.
+        assert!(joined.contains("--cap-drop=ALL"), "{joined}");
+        assert!(
+            joined.contains("--security-opt=no-new-privileges"),
+            "{joined}"
+        );
         // Image and its argv come last, image before argv.
         let img = args.iter().position(|s| s == "img@sha256:abc").unwrap();
         let arg = args.iter().position(|s| s == "contract").unwrap();
@@ -446,6 +483,7 @@ mod tests {
             volumes: &[],
             network: Network::Bridge,
             limits: ResourceLimits::default(),
+            security: SecurityOpts::default(),
         };
         let joined = create_args(&spec).join(" ");
         assert!(!joined.contains("--memory"), "{joined}");
@@ -454,6 +492,9 @@ mod tests {
         // The opt-in caps must add no flags when their fields are unset.
         assert!(!joined.contains("--memory-swap"), "{joined}");
         assert!(!joined.contains("--storage-opt"), "{joined}");
+        // Hardening flags are opt-in too: nothing emitted when unset.
+        assert!(!joined.contains("--cap-drop"), "{joined}");
+        assert!(!joined.contains("--security-opt"), "{joined}");
         // Bridge is the daemon default, so no --network flag is emitted.
         assert!(!joined.contains("--network"), "{joined}");
     }
@@ -475,6 +516,7 @@ mod tests {
                 memory_swap: Some("3g"),
                 ..ResourceLimits::default()
             },
+            security: SecurityOpts::default(),
         };
         let joined = create_args(&spec).join(" ");
         assert!(!joined.contains("--memory-swap"), "{joined}");

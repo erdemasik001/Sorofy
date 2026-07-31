@@ -50,6 +50,17 @@ const BUILD_LIMITS: crate::docker::ResourceLimits<'static> = crate::docker::Reso
     storage_opt_size: None,
 };
 
+/// Privilege hardening applied to the fetch and build containers (docs/security.md, G6).
+///
+/// A compile needs no Linux capabilities and the build already runs non-root, so
+/// dropping all caps and blocking setuid escalation costs nothing and shrinks the
+/// escape surface. Applied to both phases: fetch resolves an attacker-controlled
+/// `Cargo.toml`, build runs its `build.rs`.
+const BUILD_SECURITY: crate::docker::SecurityOpts = crate::docker::SecurityOpts {
+    cap_drop_all: true,
+    no_new_privileges: true,
+};
+
 /// One reproduction job.
 #[derive(Debug, Clone)]
 pub struct ReproductionRequest {
@@ -178,6 +189,7 @@ pub fn reproduce(docker: &Docker, request: &ReproductionRequest) -> Result<Repro
         volumes: &[(cargo_home.name(), CARGO_HOME)],
         network: Network::None,
         limits: BUILD_LIMITS,
+        security: BUILD_SECURITY,
     })?;
     tracing::info!(container = container.id(), image = %request.bldimg, "created build container");
 
@@ -273,6 +285,7 @@ fn fetch_dependencies(
         volumes: &[(cargo_home.name(), CARGO_HOME)],
         network: Network::Bridge,
         limits: BUILD_LIMITS,
+        security: BUILD_SECURITY,
     })?;
     container.put_archive(STAGE_DIR, &source.tar)?;
 

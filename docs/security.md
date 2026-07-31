@@ -156,7 +156,7 @@ further layer. No known gap; revisit when multi-verifier (Phase 3) lands.
 | **G3** | No rate limit / unbounded job queue | High | Phase 0.3 |
 | **G4** | SSRF via submitter-supplied source URI / repo | Med-High | Sandbox hardening (`3541656`) — **partially done**: host-fetch guard ✅, redirect-hop + in-container `cargo fetch` egress ✗ (see status update) |
 | **G5** | Socket mount = host root (tenancy) | Med | Accepted single-tenant; rootless/proxy tracked for post-M2 |
-| **G6** | No `--cap-drop=ALL` / `--security-opt=no-new-privileges` on the build container | Med | Container hardening (new; see status update) |
+| **G6** | No `--cap-drop=ALL` / `--security-opt=no-new-privileges` on the build container | Med | Container hardening — **done**: both flags set on fetch+build via `SecurityOpts` (see status update) |
 
 ## Residual risk & decisions
 
@@ -223,13 +223,19 @@ TOCTOU. **Undocumented residuals found in review:**
   but it is a real egress vector G4 never modelled. Needs an egress-filtered network
   or an allowlisting proxy for the fetch phase.
 
-### G6 — container hardening (new; not in the original model)
+### G6 — container hardening: closed
 The build/fetch containers run non-root (good) under the daemon's default seccomp
-profile (good — not disabled), but `create_args` sets **no `--cap-drop=ALL`** and
-**no `--security-opt=no-new-privileges`**. For a sandbox whose entire purpose is
-compiling untrusted code, dropping capabilities and blocking setuid privilege
-escalation is standard and cheap. Read-only rootfs (+ tmpfs for the writable paths)
-is a further follow-up. Severity: Medium — defense-in-depth; no known active escape.
+profile (good — not disabled). The two missing flags are now set on both phases via
+`SecurityOpts` (`docker.rs`, applied as `BUILD_SECURITY` in `reproduce.rs`) and
+unit-tested in `create_args`:
+
+- **`--cap-drop=ALL`** — a compile needs no Linux capabilities.
+- **`--security-opt=no-new-privileges`** — blocks privilege gain through a
+  setuid/setgid binary (the build already runs as uid 1000).
+
+Read-only rootfs (+ tmpfs for the writable paths) remains a further follow-up; it
+would slot into the same `SecurityOpts`. Severity was Medium — defense-in-depth;
+no known active escape either before or after.
 
 ### Confirmed-good in the same review (not regressions — recorded so they are not re-touched)
 These were checked and are correct; do **not** "fix" them:
