@@ -75,8 +75,7 @@ struct Args {
 fn main() -> ExitCode {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .with_target(false)
         .init();
@@ -90,7 +89,10 @@ fn main() -> ExitCode {
         },
         (None, Some(uri)) => SourceRef::Archive {
             uri: uri.clone(),
-            source_sha256: args.source_sha256.clone().expect("clap requires it with --source-uri"),
+            source_sha256: args
+                .source_sha256
+                .clone()
+                .expect("clap requires it with --source-uri"),
         },
         _ => {
             eprintln!("error: pass exactly one of --repo or --source-uri");
@@ -111,7 +113,10 @@ fn main() -> ExitCode {
     match reproduce(&Docker::autodetect(), &request) {
         Ok(report) => {
             if args.json {
-                println!("{}", serde_json::to_string_pretty(&report).expect("report is serializable"));
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&report).expect("report is serializable")
+                );
             } else {
                 print_report(&report);
             }
@@ -140,7 +145,10 @@ fn print_report(report: &verifier_core::ReproductionReport) {
     println!("  result:    {verdict}");
     println!("  expected:  {}", report.expected_wasm_sha256);
     println!("  rebuilt:   {}", report.rebuilt_wasm_sha256);
-    println!("  artifact:  {} ({} bytes)", report.artifact, report.rebuilt_wasm_size);
+    println!(
+        "  artifact:  {} ({} bytes)",
+        report.artifact, report.rebuilt_wasm_size
+    );
     println!("  bldimg:    {}", report.bldimg);
     if let Some(digest) = &report.bldimg_digest {
         println!("  digest:    {digest}");

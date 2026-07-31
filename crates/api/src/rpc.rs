@@ -29,7 +29,10 @@ pub enum OnChainExecutable {
 ///
 /// Returns `Ok(None)` if the contract does not exist on this network — a
 /// well-formed query about an absent entry, distinct from a transport failure.
-pub fn fetch_executable(rpc_url: &str, contract_id: &str) -> anyhow::Result<Option<OnChainExecutable>> {
+pub fn fetch_executable(
+    rpc_url: &str,
+    contract_id: &str,
+) -> anyhow::Result<Option<OnChainExecutable>> {
     let contract = stellar_strkey::Contract::from_string(contract_id)
         .map_err(|e| anyhow!("`{contract_id}` is not a valid contract id (C… strkey): {e:?}"))?;
 
@@ -99,7 +102,9 @@ fn get_ledger_entry(rpc_url: &str, key_b64: &str) -> anyhow::Result<Option<Strin
     if let Some(err) = resp.error {
         bail!("RPC error from {rpc_url}: {err}");
     }
-    let result = resp.result.ok_or_else(|| anyhow!("RPC response has neither result nor error"))?;
+    let result = resp
+        .result
+        .ok_or_else(|| anyhow!("RPC response has neither result nor error"))?;
     Ok(result.entries.into_iter().next().map(|e| e.xdr))
 }
 
@@ -122,8 +127,8 @@ mod tests {
         assert_eq!(
             exec,
             OnChainExecutable::Wasm {
-                wasm_hash_hex:
-                    "bfab576fb405952fdeb0c502e3f662668601f3b63111bcf034c240cea4b6240d".into()
+                wasm_hash_hex: "bfab576fb405952fdeb0c502e3f662668601f3b63111bcf034c240cea4b6240d"
+                    .into()
             }
         );
     }

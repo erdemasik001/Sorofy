@@ -14,8 +14,7 @@ use verifier_core::Docker;
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
@@ -25,7 +24,9 @@ async fn main() -> anyhow::Result<()> {
     let allow_unpinned = std::env::var("SOROFY_ALLOW_UNPINNED_IMAGE").is_ok_and(|v| v == "1");
 
     let docker = Docker::autodetect();
-    docker.preflight().map_err(|e| anyhow::anyhow!("docker unavailable: {e}"))?;
+    docker
+        .preflight()
+        .map_err(|e| anyhow::anyhow!("docker unavailable: {e}"))?;
 
     let db = Db::open(std::path::Path::new(&db_path))?;
     let state = AppState::new(db, docker, rpc_url.clone(), allow_unpinned);

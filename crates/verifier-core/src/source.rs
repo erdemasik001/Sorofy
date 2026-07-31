@@ -38,7 +38,11 @@ pub const BUILDER_UID: u64 = 1000;
 pub(crate) fn unique_token() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
-    format!("{}-{}", std::process::id(), COUNTER.fetch_add(1, Ordering::Relaxed))
+    format!(
+        "{}-{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    )
 }
 
 /// A source tree staged for the container, as an uncompressed tar.
@@ -110,7 +114,11 @@ fn fetch_git(repo: &str, rev: &str) -> Result<SourceArchive> {
     // is the commit's tree, not our staging fixups.
     let sha256 = sha256_hex(&archive.stdout);
     let tar = normalize_ownership(&archive.stdout)?;
-    Ok(SourceArchive { tar, top_dir: "source".into(), sha256 })
+    Ok(SourceArchive {
+        tar,
+        top_dir: "source".into(),
+        sha256,
+    })
 }
 
 /// Download `uri`, check its digest, and normalise it to an uncompressed tar.
@@ -140,10 +148,18 @@ fn fetch_archive(uri: &str, expected_sha256: &str) -> Result<SourceArchive> {
         });
     }
 
-    let tar = if is_gzip(&bytes) { gunzip(&bytes)? } else { bytes };
+    let tar = if is_gzip(&bytes) {
+        gunzip(&bytes)?
+    } else {
+        bytes
+    };
     let top_dir = single_top_dir(&tar)?;
     let tar = normalize_ownership(&tar)?;
-    Ok(SourceArchive { tar, top_dir, sha256: actual })
+    Ok(SourceArchive {
+        tar,
+        top_dir,
+        sha256: actual,
+    })
 }
 
 fn is_gzip(bytes: &[u8]) -> bool {
@@ -178,7 +194,11 @@ fn gunzip(bytes: &[u8]) -> Result<Vec<u8>> {
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| VerifyError::SourceFetch(format!("could not run gzip: {e}")))?;
-    child.stdin.take().expect("stdin was piped").write_all(bytes)?;
+    child
+        .stdin
+        .take()
+        .expect("stdin was piped")
+        .write_all(bytes)?;
     let out = child
         .wait_with_output()
         .map_err(|e| VerifyError::SourceFetch(format!("gzip failed: {e}")))?;
@@ -257,8 +277,7 @@ pub fn single_top_dir(tar: &[u8]) -> Result<String> {
         .entries()
         .map_err(|e| VerifyError::SourceFetch(format!("source archive is not a valid tar: {e}")))?
     {
-        let entry =
-            entry.map_err(|e| VerifyError::SourceFetch(format!("bad tar entry: {e}")))?;
+        let entry = entry.map_err(|e| VerifyError::SourceFetch(format!("bad tar entry: {e}")))?;
         // A `pax_global_header` (present in every GitHub codeload tarball) is
         // metadata, not a top-level directory — counting it would spuriously
         // trip the "exactly one top-level directory" check below.
@@ -272,8 +291,10 @@ pub fn single_top_dir(tar: &[u8]) -> Result<String> {
         // path would let a crafted archive write outside the staging directory.
         for component in path.components() {
             use std::path::Component;
-            if matches!(component, Component::ParentDir | Component::RootDir | Component::Prefix(_))
-            {
+            if matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            ) {
                 return Err(VerifyError::SourceFetch(format!(
                     "source archive contains an unsafe path: {}",
                     path.display()

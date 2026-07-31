@@ -34,7 +34,10 @@ impl Default for Docker {
 impl Docker {
     /// Invoke `docker` directly (the Linux deploy target).
     pub fn local() -> Self {
-        Docker { program: "docker".into(), prefix: vec![] }
+        Docker {
+            program: "docker".into(),
+            prefix: vec![],
+        }
     }
 
     /// Reach the daemon inside a WSL2 distro from a Windows host.
@@ -57,7 +60,10 @@ impl Docker {
         if let Ok(spec) = std::env::var("VERIFY_DOCKER") {
             let mut parts = spec.split_whitespace().map(String::from);
             if let Some(program) = parts.next() {
-                return Docker { program, prefix: parts.collect() };
+                return Docker {
+                    program,
+                    prefix: parts.collect(),
+                };
             }
         }
         if cfg!(windows) {
@@ -75,11 +81,10 @@ impl Docker {
 
     /// Run a docker subcommand to completion and return its stdout.
     fn run(&self, args: &[&str]) -> Result<Vec<u8>> {
-        let out = self
-            .command()
-            .args(args)
-            .output()
-            .map_err(|e| VerifyError::Docker(format!("could not run `{}`: {e}", self.program)))?;
+        let out =
+            self.command().args(args).output().map_err(|e| {
+                VerifyError::Docker(format!("could not run `{}`: {e}", self.program))
+            })?;
         if !out.status.success() {
             return Err(VerifyError::Docker(format!(
                 "`docker {}` failed: {}",
@@ -92,7 +97,8 @@ impl Docker {
 
     /// Fail early with a clear message if the daemon is unreachable.
     pub fn preflight(&self) -> Result<()> {
-        self.run(&["version", "--format", "{{.Server.Version}}"]).map(|_| ())
+        self.run(&["version", "--format", "{{.Server.Version}}"])
+            .map(|_| ())
     }
 
     /// Resolve an image's `repo@sha256:...` digest, pulling it if absent.
@@ -100,7 +106,13 @@ impl Docker {
     /// This is how a `bldimg` is minted for an image we build locally, and how
     /// we confirm a submitted digest actually resolves.
     pub fn image_digest(&self, image: &str) -> Result<Option<String>> {
-        let raw = self.run(&["image", "inspect", image, "--format", "{{json .RepoDigests}}"])?;
+        let raw = self.run(&[
+            "image",
+            "inspect",
+            image,
+            "--format",
+            "{{json .RepoDigests}}",
+        ])?;
         let digests: Vec<String> = serde_json::from_slice(&raw)
             .map_err(|e| VerifyError::Docker(format!("could not parse RepoDigests: {e}")))?;
         Ok(digests.into_iter().next())
@@ -133,7 +145,9 @@ impl Docker {
         let out = self.run(&refs)?;
         let id = String::from_utf8_lossy(&out).trim().to_string();
         if id.is_empty() {
-            return Err(VerifyError::Docker("`docker create` returned no container id".into()));
+            return Err(VerifyError::Docker(
+                "`docker create` returned no container id".into(),
+            ));
         }
         Ok(Container { docker: self, id })
     }
@@ -145,7 +159,10 @@ impl Docker {
     /// Windows path would mean nothing.
     pub fn create_volume(&self, name: &str) -> Result<Volume<'_>> {
         self.run(&["volume", "create", name])?;
-        Ok(Volume { docker: self, name: name.to_string() })
+        Ok(Volume {
+            docker: self,
+            name: name.to_string(),
+        })
     }
 }
 
@@ -298,9 +315,14 @@ impl Container<'_> {
         };
 
         let mut log = String::from_utf8_lossy(&out_thread.join().unwrap_or_default()).into_owned();
-        log.push_str(&String::from_utf8_lossy(&err_thread.join().unwrap_or_default()));
+        log.push_str(&String::from_utf8_lossy(
+            &err_thread.join().unwrap_or_default(),
+        ));
 
-        Ok(RunOutput { exit_code: status.code().unwrap_or(-1), log })
+        Ok(RunOutput {
+            exit_code: status.code().unwrap_or(-1),
+            log,
+        })
     }
 }
 

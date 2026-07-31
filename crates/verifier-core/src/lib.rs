@@ -98,7 +98,10 @@ mod tests {
         // SEP-58 mandates a digest: a tag can be repointed at different bytes,
         // which would silently invalidate earlier verifications.
         let request = ReproductionRequest::new(
-            SourceRef::Git { repo: "https://example.com/x.git".into(), rev: "HEAD".into() },
+            SourceRef::Git {
+                repo: "https://example.com/x.git".into(),
+                rev: "HEAD".into(),
+            },
             "docker.io/stellar/stellar-cli:23.2.1",
             "b68602842d3a1d169d54fe3e57c0511a774df4710553d6d4d22e653d62bf5f5b",
         );
@@ -119,7 +122,10 @@ mod tests {
             builder.append_data(&mut header, name, &b""[..]).unwrap();
         }
         let tar = builder.into_inner().unwrap();
-        assert!(matches!(source::single_top_dir(&tar), Err(VerifyError::SourceLayout(2))));
+        assert!(matches!(
+            source::single_top_dir(&tar),
+            Err(VerifyError::SourceLayout(2))
+        ));
     }
 
     #[test]
@@ -139,6 +145,9 @@ mod tests {
         builder.append(&header, &b""[..]).unwrap();
         let tar = builder.into_inner().unwrap();
 
-        assert!(matches!(source::single_top_dir(&tar), Err(VerifyError::SourceFetch(_))));
+        assert!(matches!(
+            source::single_top_dir(&tar),
+            Err(VerifyError::SourceFetch(_))
+        ));
     }
 }

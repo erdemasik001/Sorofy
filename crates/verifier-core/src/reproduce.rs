@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use crate::docker::{ContainerSpec, Network, Volume};
 use crate::docker::Docker;
+use crate::docker::{ContainerSpec, Network, Volume};
 use crate::error::{Result, VerifyError};
 use crate::source::{SourceArchive, SourceRef};
 use crate::{sha256_hex, TrustLevel, VerificationResult};
@@ -129,13 +129,23 @@ pub fn reproduce(docker: &Docker, request: &ReproductionRequest) -> Result<Repro
 
     let fetch_timeout = request.timeout / FETCH_TIMEOUT_FRACTION;
     let started = Instant::now();
-    fetch_dependencies(docker, request, &source, &workdir, &cargo_home, fetch_timeout)?;
+    fetch_dependencies(
+        docker,
+        request,
+        &source,
+        &workdir,
+        &cargo_home,
+        fetch_timeout,
+    )?;
 
     // `stellar contract build` runs against the image's baked-in toolchain. It
     // has no --locked of its own; lockfile adherence is already guaranteed from
     // both sides: phase 1's `cargo fetch --locked` fails on a missing or stale
     // Cargo.lock, and this phase can only resolve from what that left behind.
-    let mut argv: Vec<String> = ["contract", "build"].iter().map(|s| s.to_string()).collect();
+    let mut argv: Vec<String> = ["contract", "build"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     argv.extend(request.bldopt.iter().cloned());
 
     let container = docker.create(&ContainerSpec {
@@ -157,7 +167,10 @@ pub fn reproduce(docker: &Docker, request: &ReproductionRequest) -> Result<Repro
 
     if run.exit_code != 0 {
         tracing::warn!(exit_code = run.exit_code, log = %run.log, "build failed");
-        return Err(VerifyError::BuildFailed { code: run.exit_code, log: run.log });
+        return Err(VerifyError::BuildFailed {
+            code: run.exit_code,
+            log: run.log,
+        });
     }
 
     let (artifact, wasm) = extract_wasm(&container, &workdir)?;
@@ -223,7 +236,10 @@ fn fetch_dependencies(
     // host-side dependencies (proc macros, build scripts), which the offline
     // build phase then could not download. Fetching for all targets is the
     // superset the build is guaranteed to be satisfiable from.
-    let argv: Vec<String> = ["fetch", "--locked"].iter().map(|s| s.to_string()).collect();
+    let argv: Vec<String> = ["fetch", "--locked"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
 
     let container = docker.create(&ContainerSpec {
         image: &request.bldimg,
@@ -243,7 +259,10 @@ fn fetch_dependencies(
         // Almost always a missing/stale Cargo.lock: --locked refuses to invent
         // versions, and a source tree without one cannot be reproduced anyway.
         tracing::warn!(exit_code = run.exit_code, log = %run.log, "dependency fetch failed");
-        return Err(VerifyError::BuildFailed { code: run.exit_code, log: run.log });
+        return Err(VerifyError::BuildFailed {
+            code: run.exit_code,
+            log: run.log,
+        });
     }
     Ok(())
 }
@@ -270,7 +289,10 @@ fn is_missing_path(docker_error: &str) -> bool {
 /// More than one artifact still at the root means a workspace with several
 /// contracts, where "the" WASM is genuinely ambiguous; the submitter has to say
 /// which, via a `bldopt` like `--package=<name>`.
-fn extract_wasm(container: &crate::docker::Container<'_>, workdir: &str) -> Result<(String, Vec<u8>)> {
+fn extract_wasm(
+    container: &crate::docker::Container<'_>,
+    workdir: &str,
+) -> Result<(String, Vec<u8>)> {
     let release_dir = format!("{workdir}/target/{WASM_TARGET}/release");
     let tar = match container.get_archive(&release_dir) {
         Ok(tar) => tar,
@@ -331,7 +353,10 @@ fn extract_wasm(container: &crate::docker::Container<'_>, workdir: &str) -> Resu
                 return Ok(found.swap_remove(optimized[0]));
             }
             let names = found.iter().map(|(p, _)| p.clone()).collect();
-            Err(VerifyError::AmbiguousWasm { count: found.len(), names })
+            Err(VerifyError::AmbiguousWasm {
+                count: found.len(),
+                names,
+            })
         }
     }
 }

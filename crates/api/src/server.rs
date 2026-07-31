@@ -220,8 +220,7 @@ async fn run_job(state: AppState, id: i64, job: ReproductionRequest) {
         .expect("semaphore is never closed");
 
     let docker = state.docker.clone();
-    let outcome =
-        tokio::task::spawn_blocking(move || reproduce(&docker, &job)).await;
+    let outcome = tokio::task::spawn_blocking(move || reproduce(&docker, &job)).await;
     drop(permit);
 
     let recorded = match outcome {
@@ -279,7 +278,11 @@ mod tests {
     #[test]
     fn git_source_needs_repo_and_rev() {
         // repo + rev → Git.
-        let r = VerifyRequest { repo: Some("https://example.com/x.git".into()), rev: Some("abc123".into()), ..req() };
+        let r = VerifyRequest {
+            repo: Some("https://example.com/x.git".into()),
+            rev: Some("abc123".into()),
+            ..req()
+        };
         match parse_source(&r) {
             Ok(SourceRef::Git { repo, rev }) => {
                 assert_eq!(repo, "https://example.com/x.git");
@@ -290,7 +293,10 @@ mod tests {
 
         // repo without rev → 400, not a silent HEAD default (the engine's CLI
         // defaults to HEAD, but the API refuses to guess a moving target).
-        let r = VerifyRequest { repo: Some("https://example.com/x.git".into()), ..req() };
+        let r = VerifyRequest {
+            repo: Some("https://example.com/x.git".into()),
+            ..req()
+        };
         assert!(matches!(parse_source(&r), Err(ApiError::BadRequest(_))));
     }
 
@@ -313,7 +319,10 @@ mod tests {
         }
 
         // source_uri without source_sha256 → 400 (SEP-58 step 3 needs the digest).
-        let r = VerifyRequest { source_uri: Some("https://example.com/s.tar.gz".into()), ..req() };
+        let r = VerifyRequest {
+            source_uri: Some("https://example.com/s.tar.gz".into()),
+            ..req()
+        };
         assert!(matches!(parse_source(&r), Err(ApiError::BadRequest(_))));
     }
 
@@ -344,7 +353,9 @@ mod tests {
             StatusCode::NOT_FOUND
         );
         assert_eq!(
-            ApiError::Internal(anyhow::anyhow!("boom")).into_response().status(),
+            ApiError::Internal(anyhow::anyhow!("boom"))
+                .into_response()
+                .status(),
             StatusCode::INTERNAL_SERVER_ERROR
         );
     }

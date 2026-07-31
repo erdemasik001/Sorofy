@@ -67,7 +67,13 @@ fn request(source: SourceRef, expected: &str) -> ReproductionRequest {
 fn verified_correct_source_and_hash() {
     let report = reproduce(
         &Docker::autodetect(),
-        &request(SourceRef::Git { repo: repo(), rev: rev() }, EXPECTED_WASM),
+        &request(
+            SourceRef::Git {
+                repo: repo(),
+                rev: rev(),
+            },
+            EXPECTED_WASM,
+        ),
     )
     .expect("reproduction should succeed");
 
@@ -84,7 +90,13 @@ fn mismatch_wrong_expected_hash() {
     let wrong = "0000000000000000000000000000000000000000000000000000000000000000";
     let report = reproduce(
         &Docker::autodetect(),
-        &request(SourceRef::Git { repo: repo(), rev: rev() }, wrong),
+        &request(
+            SourceRef::Git {
+                repo: repo(),
+                rev: rev(),
+            },
+            wrong,
+        ),
     )
     .expect("build succeeds; only the hash comparison fails");
 
@@ -101,14 +113,26 @@ fn mismatch_tampered_source() {
     let lib = clone.path().join("contracts/hello-world/src/lib.rs");
     let original = std::fs::read_to_string(&lib).expect("read lib.rs");
     let tampered = original.replace("\"Hello\"", "\"Howdy\"");
-    assert_ne!(original, tampered, "expected a `Hello` literal to tamper with");
+    assert_ne!(
+        original, tampered,
+        "expected a `Hello` literal to tamper with"
+    );
     std::fs::write(&lib, tampered).expect("write tampered lib.rs");
-    git(clone.path(), &["commit", "--quiet", "-am", "tamper: Hello -> Howdy"]);
+    git(
+        clone.path(),
+        &["commit", "--quiet", "-am", "tamper: Hello -> Howdy"],
+    );
     let head = git_stdout(clone.path(), &["rev-parse", "HEAD"]);
 
     let report = reproduce(
         &Docker::autodetect(),
-        &request(SourceRef::Git { repo: path_str(clone.path()), rev: head }, EXPECTED_WASM),
+        &request(
+            SourceRef::Git {
+                repo: path_str(clone.path()),
+                rev: head,
+            },
+            EXPECTED_WASM,
+        ),
     )
     .expect("tampered source still builds");
 
@@ -131,7 +155,13 @@ fn verified_original_rev_despite_dirty_working_tree() {
 
     let report = reproduce(
         &Docker::autodetect(),
-        &request(SourceRef::Git { repo: path_str(clone.path()), rev: original }, EXPECTED_WASM),
+        &request(
+            SourceRef::Git {
+                repo: path_str(clone.path()),
+                rev: original,
+            },
+            EXPECTED_WASM,
+        ),
     )
     .expect("reproduction should succeed");
 
@@ -154,7 +184,10 @@ fn verified_archive_source_uri() {
     let report = reproduce(
         &Docker::autodetect(),
         &request(
-            SourceRef::Archive { uri: FIXTURE_TARBALL.into(), source_sha256: sha256 },
+            SourceRef::Archive {
+                uri: FIXTURE_TARBALL.into(),
+                source_sha256: sha256,
+            },
             EXPECTED_WASM,
         ),
     )
@@ -176,7 +209,10 @@ fn archive_source_uri_bad_digest_rejected() {
     let err = reproduce(
         &Docker::autodetect(),
         &request(
-            SourceRef::Archive { uri: FIXTURE_TARBALL.into(), source_sha256: wrong.into() },
+            SourceRef::Archive {
+                uri: FIXTURE_TARBALL.into(),
+                source_sha256: wrong.into(),
+            },
             EXPECTED_WASM,
         ),
     )
@@ -185,7 +221,10 @@ fn archive_source_uri_bad_digest_rejected() {
     match err {
         VerifyError::SourceIntegrity { expected, actual } => {
             assert_eq!(expected, wrong);
-            assert_ne!(actual, wrong, "the real digest must differ from the bad one");
+            assert_ne!(
+                actual, wrong,
+                "the real digest must differ from the bad one"
+            );
         }
         other => panic!("expected SourceIntegrity, got {other:?}"),
     }
@@ -237,8 +276,14 @@ fn clone_fixture() -> TempDir {
         String::from_utf8_lossy(&out.stderr).trim()
     );
     // Identity so the tamper case can commit.
-    git(dir.path(), &["config", "user.email", "test@example.invalid"]);
-    git(dir.path(), &["config", "user.name", "reproduce-integration"]);
+    git(
+        dir.path(),
+        &["config", "user.email", "test@example.invalid"],
+    );
+    git(
+        dir.path(),
+        &["config", "user.name", "reproduce-integration"],
+    );
     dir
 }
 

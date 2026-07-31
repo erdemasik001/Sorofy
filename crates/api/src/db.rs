@@ -128,7 +128,12 @@ impl Db {
         conn.execute(
             "INSERT INTO verifications (contract_id, wasm_hash, source, bldimg, status)
              VALUES (?1, ?2, ?3, ?4, 'pending')",
-            params![contract_id, wasm_hash.to_lowercase(), source.to_string(), bldimg],
+            params![
+                contract_id,
+                wasm_hash.to_lowercase(),
+                source.to_string(),
+                bldimg
+            ],
         )
         .context("inserting pending verification")?;
         Ok(conn.last_insert_rowid())
@@ -243,14 +248,21 @@ mod tests {
     #[test]
     fn pending_then_complete_roundtrips() {
         let db = Db::open_in_memory().unwrap();
-        let id = db.insert_pending(Some("CABC"), "AABB01", &source(), "img@sha256:x").unwrap();
+        let id = db
+            .insert_pending(Some("CABC"), "AABB01", &source(), "img@sha256:x")
+            .unwrap();
 
         let row = db.get(id).unwrap().expect("row exists");
         assert_eq!(row.status, JobStatus::Pending);
         // Hashes are canonicalized to lowercase on the way in.
         assert_eq!(row.wasm_hash, "aabb01");
 
-        db.complete(id, JobStatus::Verified, &serde_json::json!({"result": "verified"})).unwrap();
+        db.complete(
+            id,
+            JobStatus::Verified,
+            &serde_json::json!({"result": "verified"}),
+        )
+        .unwrap();
         let row = db.get(id).unwrap().expect("row exists");
         assert_eq!(row.status, JobStatus::Verified);
         assert!(row.report.is_some());
@@ -259,9 +271,13 @@ mod tests {
     #[test]
     fn lookup_matches_contract_id_and_hash_and_prefers_newest() {
         let db = Db::open_in_memory().unwrap();
-        let first = db.insert_pending(Some("CID1"), "aa11", &source(), "img").unwrap();
+        let first = db
+            .insert_pending(Some("CID1"), "aa11", &source(), "img")
+            .unwrap();
         db.fail(first, "boom").unwrap();
-        let second = db.insert_pending(Some("CID1"), "aa11", &source(), "img").unwrap();
+        let second = db
+            .insert_pending(Some("CID1"), "aa11", &source(), "img")
+            .unwrap();
 
         // Same key via contract id and via (case-insensitive) hash.
         assert_eq!(db.lookup("CID1").unwrap().expect("found").id, second);
