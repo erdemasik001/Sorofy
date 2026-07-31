@@ -116,6 +116,16 @@ impl Db {
         self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// Cheap liveness check: confirm the connection still answers a query.
+    ///
+    /// Backs `GET /health` — a locked or corrupted cache surfaces as a failed ping
+    /// rather than only showing up when a real request tries to read or write.
+    pub fn ping(&self) -> anyhow::Result<()> {
+        self.conn()
+            .query_row("SELECT 1", [], |_| Ok(()))
+            .context("db ping")
+    }
+
     /// Record a new job as pending; returns its row id.
     pub fn insert_pending(
         &self,

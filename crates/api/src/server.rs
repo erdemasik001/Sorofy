@@ -6,6 +6,7 @@
 //! and an unbounded queue of them is a self-inflicted denial of service.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -106,6 +107,78 @@ impl RateLimiter {
     }
 }
 
+/// Terminal outcome of a job, for metrics.
+#[derive(Clone, Copy)]
+enum Outcome {
+    Verified,
+    Mismatch,
+    Errored,
+}
+
+/// Process-lifetime counters exposed at `GET /metrics` (docs/security.md / roadmap
+/// 0.4). Cheap to clone (shared inner). All counters are monotonic except
+/// `in_flight`, which is a gauge kept balanced by one `on_accepted` per job and
+/// exactly one `on_finished` per job.
+#[derive(Clone, Default)]
+struct Metrics {
+    inner: Arc<MetricsInner>,
+}
+
+#[derive(Default)]
+struct MetricsInner {
+    submitted: AtomicU64,
+    in_flight: AtomicU64,
+    verified: AtomicU64,
+    mismatch: AtomicU64,
+    errored: AtomicU64,
+    build_ms_total: AtomicU64,
+    builds_timed: AtomicU64,
+}
+
+impl Metrics {
+    /// A job was accepted and spawned.
+    fn on_accepted(&self) {
+        self.inner.submitted.fetch_add(1, Ordering::Relaxed);
+        self.inner.in_flight.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// A job finished with `outcome`; `build_seconds` is present when a build ran
+    /// (i.e. not for an engine error that failed before/without building).
+    fn on_finished(&self, outcome: Outcome, build_seconds: Option<f64>) {
+        self.inner.in_flight.fetch_sub(1, Ordering::Relaxed);
+        let counter = match outcome {
+            Outcome::Verified => &self.inner.verified,
+            Outcome::Mismatch => &self.inner.mismatch,
+            Outcome::Errored => &self.inner.errored,
+        };
+        counter.fetch_add(1, Ordering::Relaxed);
+        if let Some(secs) = build_seconds {
+            self.inner
+                .build_ms_total
+                .fetch_add((secs * 1000.0) as u64, Ordering::Relaxed);
+            self.inner.builds_timed.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn snapshot(&self) -> serde_json::Value {
+        let m = &self.inner;
+        let timed = m.builds_timed.load(Ordering::Relaxed);
+        let avg_build_seconds = if timed > 0 {
+            (m.build_ms_total.load(Ordering::Relaxed) as f64 / timed as f64) / 1000.0
+        } else {
+            0.0
+        };
+        serde_json::json!({
+            "jobs_submitted": m.submitted.load(Ordering::Relaxed),
+            "jobs_in_flight": m.in_flight.load(Ordering::Relaxed),
+            "verified": m.verified.load(Ordering::Relaxed),
+            "mismatch": m.mismatch.load(Ordering::Relaxed),
+            "error": m.errored.load(Ordering::Relaxed),
+            "avg_build_seconds": avg_build_seconds,
+        })
+    }
+}
+
 /// Everything a handler needs. Cheap to clone.
 #[derive(Clone)]
 pub struct AppState {
@@ -123,6 +196,8 @@ pub struct AppState {
     admission: Arc<Semaphore>,
     /// Per-principal request-rate limit on `POST /verify` (docs/security.md, G3).
     rate_limiter: RateLimiter,
+    /// Process-lifetime job counters, served at `GET /metrics` (roadmap 0.4).
+    metrics: Metrics,
 }
 
 impl AppState {
@@ -146,6 +221,7 @@ impl AppState {
                 RATE_LIMIT_REFILL_PER_SEC,
                 MAX_TRACKED_CLIENTS,
             ),
+            metrics: Metrics::default(),
         }
     }
 }
@@ -153,9 +229,34 @@ impl AppState {
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(index))
+        .route("/health", get(health))
+        .route("/metrics", get(metrics))
         .route("/verify", post(start_verification))
         .route("/verify/{key}", get(get_verification))
         .with_state(state)
+}
+
+/// Liveness + a cheap cache ping (roadmap 0.4). Public and unauthenticated so a
+/// load balancer or uptime check can poll it; 503 if the db does not answer.
+async fn health(State(state): State<AppState>) -> Response {
+    match state.db.ping() {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "status": "ok", "service": "sorofy" })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "status": "degraded", "error": format!("{e:#}") })),
+        )
+            .into_response(),
+    }
+}
+
+/// Process-lifetime job counters (roadmap 0.4). Public: a single-tenant testnet
+/// box exposes only aggregate counts, no per-request data.
+async fn metrics(State(state): State<AppState>) -> Json<serde_json::Value> {
+    Json(state.metrics.snapshot())
 }
 
 /// `POST /verify` body. SEP-58 field names (`bldimg`, `bldopt`, `source_uri`,
@@ -247,6 +348,8 @@ async fn index() -> Json<serde_json::Value> {
         "endpoints": {
             "POST /verify": "start a verification job",
             "GET /verify/{id|contract_id|wasm_hash}": "cached result",
+            "GET /health": "liveness + cache ping",
+            "GET /metrics": "job counters",
         },
     }))
 }
@@ -338,6 +441,7 @@ async fn start_verification(
         allow_unpinned_image: state.allow_unpinned_image,
         emit_wasm: None,
     };
+    state.metrics.on_accepted();
     tokio::spawn(run_job(state.clone(), id, job, admission));
 
     Ok((
@@ -449,18 +553,29 @@ async fn run_job(
     let outcome = tokio::task::spawn_blocking(move || reproduce(&docker, &job)).await;
     drop(permit);
 
-    let recorded = match outcome {
+    let ((outcome, build_seconds), recorded) = match outcome {
         Ok(Ok(report)) => {
-            let status = match report.result {
-                VerificationResult::Verified => JobStatus::Verified,
-                _ => JobStatus::Mismatch,
+            let (status, outcome) = match report.result {
+                VerificationResult::Verified => (JobStatus::Verified, Outcome::Verified),
+                _ => (JobStatus::Mismatch, Outcome::Mismatch),
             };
+            let build_seconds = report.build_seconds;
             let report_json = serde_json::to_value(&report).expect("report serializes");
-            state.db.complete(id, status, &report_json)
+            (
+                (outcome, Some(build_seconds)),
+                state.db.complete(id, status, &report_json),
+            )
         }
-        Ok(Err(engine_err)) => state.db.fail(id, &engine_err.to_string()),
-        Err(join_err) => state.db.fail(id, &format!("job panicked: {join_err}")),
+        Ok(Err(engine_err)) => (
+            (Outcome::Errored, None),
+            state.db.fail(id, &engine_err.to_string()),
+        ),
+        Err(join_err) => (
+            (Outcome::Errored, None),
+            state.db.fail(id, &format!("job panicked: {join_err}")),
+        ),
     };
+    state.metrics.on_finished(outcome, build_seconds);
     if let Err(db_err) = recorded {
         tracing::error!(id, error = %db_err, "failed to record job outcome");
     }
@@ -766,5 +881,47 @@ mod tests {
             .await
             .expect_err("rate limited");
         assert!(matches!(err, ApiError::RateLimited(_)));
+    }
+
+    #[test]
+    fn metrics_track_accepted_and_outcomes() {
+        let m = Metrics::default();
+        m.on_accepted();
+        m.on_accepted();
+        // Two accepted, two in flight, none finished.
+        let s = m.snapshot();
+        assert_eq!(s["jobs_submitted"], 2);
+        assert_eq!(s["jobs_in_flight"], 2);
+
+        m.on_finished(Outcome::Verified, Some(4.0));
+        m.on_finished(Outcome::Mismatch, Some(2.0));
+        let s = m.snapshot();
+        assert_eq!(s["jobs_in_flight"], 0); // gauge back to zero
+        assert_eq!(s["verified"], 1);
+        assert_eq!(s["mismatch"], 1);
+        assert_eq!(s["error"], 0);
+        assert_eq!(s["avg_build_seconds"], 3.0); // mean of 4s and 2s
+
+        // An engine error with no build contributes to `error` but not the average.
+        m.on_accepted();
+        m.on_finished(Outcome::Errored, None);
+        let s = m.snapshot();
+        assert_eq!(s["error"], 1);
+        assert_eq!(s["avg_build_seconds"], 3.0);
+    }
+
+    #[tokio::test]
+    async fn health_is_ok_when_the_db_answers() {
+        let resp = health(State(test_state())).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn metrics_endpoint_returns_the_snapshot() {
+        let state = test_state();
+        state.metrics.on_accepted();
+        let Json(body) = metrics(State(state)).await;
+        assert_eq!(body["jobs_submitted"], 1);
+        assert_eq!(body["jobs_in_flight"], 1);
     }
 }
