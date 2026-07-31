@@ -316,15 +316,10 @@ fn is_missing_path(docker_error: &str) -> bool {
 
 /// Pull the built `.wasm` out of the container.
 ///
-/// Copies the release directory out as a tar and picks the contract artifact.
-/// Cargo writes its finished artifacts at the root of the profile directory and
-/// uses subdirectories (`deps/`, `build/`, `incremental/`) for intermediates —
-/// the copy under `deps/` is the same contract, not a second candidate — so
-/// only root-level `.wasm` files are considered.
-///
-/// More than one artifact still at the root means a workspace with several
-/// contracts, where "the" WASM is genuinely ambiguous; the submitter has to say
-/// which, via a `bldopt` like `--package=<name>`.
+/// Copies the release directory out as a tar, then hands the bytes to
+/// [`select_wasm_from_tar`] to pick the contract artifact. The container I/O is
+/// here; the selection *rules* live in that pure function so they can be tested
+/// without a running daemon.
 fn extract_wasm(
     container: &crate::docker::Container<'_>,
     workdir: &str,
@@ -341,8 +336,25 @@ fn extract_wasm(
         }
         Err(e) => return Err(e),
     };
+    select_wasm_from_tar(&tar)
+}
 
-    let mut archive = tar::Archive::new(&tar[..]);
+/// Pick the contract's `.wasm` from the release directory's tar bytes.
+///
+/// Split out from [`extract_wasm`] so the selection rules can be unit-tested
+/// without a container. Cargo writes finished artifacts at the root of the
+/// profile directory and uses subdirectories (`deps/`, `build/`, `incremental/`)
+/// for intermediates — the copy under `deps/` is the same contract, not a second
+/// candidate — so only root-level `.wasm` files count. `docker cp <dir>` roots
+/// the tar at the directory itself, so a finished artifact is exactly
+/// `release/<name>.wasm` (depth 2); anything deeper is an intermediate.
+///
+/// More than one artifact at the root means a workspace with several contracts,
+/// where "the" WASM is genuinely ambiguous — except the `--optimize` case, which
+/// emits `<name>.optimized.wasm` next to the original; that pair resolves to the
+/// optimized one, since that is what gets deployed and whose hash is on chain.
+fn select_wasm_from_tar(tar: &[u8]) -> Result<(String, Vec<u8>)> {
+    let mut archive = tar::Archive::new(tar);
     let mut found: Vec<(String, Vec<u8>)> = Vec::new();
     for entry in archive
         .entries()
@@ -361,9 +373,8 @@ fn extract_wasm(
         if !path.ends_with(".wasm") {
             continue;
         }
-        // `docker cp <dir>` roots the tar at the directory itself, so a
-        // finished artifact is exactly `release/<name>.wasm`; anything deeper
-        // is a cargo intermediate.
+        // Root-level only: `release/<name>.wasm` is depth 2; deeper is a cargo
+        // intermediate (`deps/`, `build/`, `incremental/`).
         if path.split('/').filter(|s| !s.is_empty()).count() != 2 {
             continue;
         }
@@ -376,9 +387,8 @@ fn extract_wasm(
         0 => Err(VerifyError::NoWasmProduced),
         1 => Ok(found.pop().expect("checked len == 1")),
         _ => {
-            // `stellar contract build --optimize` emits `<name>.optimized.wasm`
-            // next to the original. The optimized one is what gets deployed, so
-            // it is the artifact whose hash is on chain.
+            // `--optimize` emits `<name>.optimized.wasm` beside the original. The
+            // optimized one is what gets deployed, so it is the on-chain artifact.
             let optimized: Vec<usize> = found
                 .iter()
                 .enumerate()
@@ -393,6 +403,95 @@ fn extract_wasm(
                 count: found.len(),
                 names,
             })
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build an in-memory tar from `(path, bytes)` entries — the shape
+    /// `docker cp <release_dir> -` produces, rooted at `release/`.
+    fn tar_with(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut builder = tar::Builder::new(Vec::new());
+        for &(path, data) in entries {
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(tar::EntryType::Regular);
+            header.set_size(data.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, path, data)
+                .expect("append tar entry");
+        }
+        builder.into_inner().expect("finish tar")
+    }
+
+    #[test]
+    fn single_root_wasm_is_selected() {
+        let tar = tar_with(&[("release/hello.wasm", b"WASM")]);
+        let (name, bytes) = select_wasm_from_tar(&tar).expect("one artifact");
+        assert_eq!(name, "release/hello.wasm");
+        assert_eq!(bytes, b"WASM");
+    }
+
+    #[test]
+    fn no_wasm_is_no_wasm_produced() {
+        // Non-wasm outputs only → the build produced no contract artifact.
+        let tar = tar_with(&[("release/hello.d", b"x"), ("release/libhello.rlib", b"y")]);
+        assert!(matches!(
+            select_wasm_from_tar(&tar),
+            Err(VerifyError::NoWasmProduced)
+        ));
+    }
+
+    #[test]
+    fn intermediate_wasm_under_deps_is_ignored() {
+        // The `deps/` copy is a cargo intermediate, not a second candidate.
+        let tar = tar_with(&[
+            ("release/hello.wasm", b"ROOT"),
+            ("release/deps/hello.wasm", b"DEP"),
+        ]);
+        let (name, bytes) = select_wasm_from_tar(&tar).expect("root artifact wins");
+        assert_eq!(name, "release/hello.wasm");
+        assert_eq!(bytes, b"ROOT");
+    }
+
+    #[test]
+    fn optimized_artifact_wins_over_its_unoptimized_sibling() {
+        let tar = tar_with(&[
+            ("release/hello.wasm", b"PLAIN"),
+            ("release/hello.optimized.wasm", b"OPT"),
+        ]);
+        let (name, bytes) = select_wasm_from_tar(&tar).expect("optimized wins");
+        assert_eq!(name, "release/hello.optimized.wasm");
+        assert_eq!(bytes, b"OPT");
+    }
+
+    #[test]
+    fn two_unrelated_contracts_are_ambiguous_not_auto_picked() {
+        // Two roots, neither optimized → the optimize shortcut must NOT fire.
+        let tar = tar_with(&[("release/one.wasm", b"1"), ("release/two.wasm", b"2")]);
+        assert!(matches!(
+            select_wasm_from_tar(&tar),
+            Err(VerifyError::AmbiguousWasm { count: 2, .. })
+        ));
+    }
+
+    #[test]
+    fn three_contracts_are_ambiguous_with_all_names() {
+        let tar = tar_with(&[
+            ("release/one.wasm", b"1"),
+            ("release/two.wasm", b"2"),
+            ("release/three.wasm", b"3"),
+        ]);
+        match select_wasm_from_tar(&tar) {
+            Err(VerifyError::AmbiguousWasm { count, names }) => {
+                assert_eq!(count, 3);
+                assert_eq!(names.len(), 3);
+            }
+            other => panic!("expected AmbiguousWasm, got {other:?}"),
         }
     }
 }
