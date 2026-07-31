@@ -47,6 +47,24 @@ live testnet service. Deploy artifacts already exist ([`docker/api/Dockerfile`](
 [`fly.toml`](../fly.toml)); what's missing is the hardening that must precede any
 public exposure.
 
+### Checklist (live status)
+
+- [x] **0.1 Security pass** — threat model ([`docs/security.md`](security.md), commit `595b2d0`)
+- [ ] **0.2 Auth** — bearer token on `POST /verify` (`GET` stays public)
+- [ ] **0.3 Rate-limiting** — quota per token/IP
+- [ ] **0.4 Observability** — `/health`, structured logs, metrics (job count/duration/outcome)
+- [ ] **0.5 Persistence hardening** — schema migrations + volume backup
+- [ ] **0.6 Integration test lane** — wire the `#[ignore]`d Docker/RPC tests into CI
+- [ ] **0.7 Deploy to testnet host** — VPS + Docker-out-of-Docker, live URL *(blocked by 0.2–0.5, 0.9)*
+- [ ] **0.8 Narrative update** — README/pitch reflect "testnet productization"
+- [x] **0.9 Sandbox hardening** — build resource limits (G1) + SSRF guard (G4), surfaced by 0.1 (commit `3541656`)
+
+**🚦 Phase 0 quality gate:** live testnet URL responds · unauthenticated `POST`
+returns 401 · security pass documented · integration lane green in CI · SLO
+baseline captured.
+
+The table below is the rationale for each item.
+
 | Work | Why it's required | Builds on |
 |---|---|---|
 | **Security pass (do first)** — threat model for the untrusted-build sandbox + socket-mount model | The service compiles untrusted code and controls the host daemon; the risk surface must be understood before it faces the internet | `docker.rs` isolation, `reproduce.rs` two-phase split |
@@ -56,14 +74,11 @@ public exposure.
 | **Observability** — `/health`, structured logs, basic metrics (job count/duration/outcome) | "Flawless" has to be measurable | `tracing` is already wired |
 | **Persistence hardening** — migration mechanism + volume backup | No data loss across deploy/restart | `db.rs` single table |
 | **Integration test lane** — wire the `#[ignore]`d Docker/RPC tests into a real CI lane | What we deploy must be proven, not assumed | 6 reproduction + 1 RPC ignored tests |
+| **Sandbox hardening** — build resource limits (`--memory`/`--cpus`/`--pids-limit`) + SSRF egress guard | A hostile `build.rs` could OOM/fork-bomb the host; source fetch could reach internal addresses (docs/security.md G1, G4) | `docker.rs`, `source.rs` |
 | **Narrative update** — README/pitch-deck reflect "testnet productization" | Post-award status | docs |
 
-**🚦 Quality gate (= "deployable to testnet"):** live testnet URL responds ·
-unauthenticated `POST` returns 401 · security pass documented · integration lane
-green in CI · SLO baseline captured.
-
-> Passing this gate **meets the near-term goal**: the product is live and secure
-> on testnet. Phases 1–3 complete M2 on top of it.
+> Passing the Phase 0 gate above **meets the near-term goal**: the product is
+> live and secure on testnet. Phases 1–3 complete M2 on top of it.
 
 **Primary risk:** mounting the host Docker socket grants the container control of
 the host daemon. Mitigation: auth + single-tenant isolation now; evaluate
