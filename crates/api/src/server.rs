@@ -256,3 +256,108 @@ async fn get_verification(
         None => Err(ApiError::NotFound("not_found".into())),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A minimal `VerifyRequest` with only `bldimg` set; each test fills in the
+    /// source fields it exercises. Keeps the source-selection cases readable.
+    fn req() -> VerifyRequest {
+        VerifyRequest {
+            contract_id: None,
+            wasm_hash: None,
+            repo: None,
+            rev: None,
+            source_uri: None,
+            source_sha256: None,
+            bldimg: "ghcr.io/x/img@sha256:abc".into(),
+            bldopt: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn git_source_needs_repo_and_rev() {
+        // repo + rev → Git.
+        let r = VerifyRequest { repo: Some("https://example.com/x.git".into()), rev: Some("abc123".into()), ..req() };
+        match parse_source(&r) {
+            Ok(SourceRef::Git { repo, rev }) => {
+                assert_eq!(repo, "https://example.com/x.git");
+                assert_eq!(rev, "abc123");
+            }
+            _ => panic!("expected a Git source from repo+rev"),
+        }
+
+        // repo without rev → 400, not a silent HEAD default (the engine's CLI
+        // defaults to HEAD, but the API refuses to guess a moving target).
+        let r = VerifyRequest { repo: Some("https://example.com/x.git".into()), ..req() };
+        assert!(matches!(parse_source(&r), Err(ApiError::BadRequest(_))));
+    }
+
+    #[test]
+    fn archive_source_needs_uri_and_sha256() {
+        // source_uri + source_sha256 → Archive.
+        let r = VerifyRequest {
+            source_uri: Some("https://example.com/s.tar.gz".into()),
+            source_sha256: Some("DEADBEEF".into()),
+            ..req()
+        };
+        match parse_source(&r) {
+            Ok(SourceRef::Archive { uri, source_sha256 }) => {
+                assert_eq!(uri, "https://example.com/s.tar.gz");
+                // parse_source passes the digest through verbatim; canonicalization
+                // is the fetch layer's job (it compares case-insensitively).
+                assert_eq!(source_sha256, "DEADBEEF");
+            }
+            _ => panic!("expected an Archive source from source_uri+source_sha256"),
+        }
+
+        // source_uri without source_sha256 → 400 (SEP-58 step 3 needs the digest).
+        let r = VerifyRequest { source_uri: Some("https://example.com/s.tar.gz".into()), ..req() };
+        assert!(matches!(parse_source(&r), Err(ApiError::BadRequest(_))));
+    }
+
+    #[test]
+    fn exactly_one_source_shape_is_required() {
+        // Both a git repo and an archive → ambiguous → 400.
+        let both = VerifyRequest {
+            repo: Some("https://example.com/x.git".into()),
+            rev: Some("abc".into()),
+            source_uri: Some("https://example.com/s.tar.gz".into()),
+            source_sha256: Some("abc".into()),
+            ..req()
+        };
+        assert!(matches!(parse_source(&both), Err(ApiError::BadRequest(_))));
+
+        // Neither → 400.
+        assert!(matches!(parse_source(&req()), Err(ApiError::BadRequest(_))));
+    }
+
+    #[test]
+    fn api_errors_map_to_their_status_codes() {
+        assert_eq!(
+            ApiError::BadRequest("x".into()).into_response().status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            ApiError::NotFound("x".into()).into_response().status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            ApiError::Internal(anyhow::anyhow!("boom")).into_response().status(),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+    }
+
+    #[test]
+    fn unknown_request_fields_are_rejected() {
+        // `deny_unknown_fields` guards against a caller misspelling a field (e.g.
+        // `wasmhash`) and silently getting a different verification than intended.
+        let bad = serde_json::json!({ "bldimg": "img@sha256:abc", "wasmhash": "typo" });
+        assert!(serde_json::from_value::<VerifyRequest>(bad).is_err());
+
+        // The correctly-spelled shape still deserializes.
+        let good = serde_json::json!({ "bldimg": "img@sha256:abc", "wasm_hash": "aa" });
+        assert!(serde_json::from_value::<VerifyRequest>(good).is_ok());
+    }
+}
