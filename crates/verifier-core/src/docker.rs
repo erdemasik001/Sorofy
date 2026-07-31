@@ -148,11 +148,21 @@ impl Docker {
 
 /// Whether a container can reach the network.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Network {
+pub enum Network<'a> {
     /// Default bridge networking.
     Bridge,
     /// `--network=none`.
     None,
+    /// A named docker network, `--network=<name>`.
+    ///
+    /// The seam for egress control (docs/adr/0001-fetch-egress-control.md, G4-b):
+    /// the fetch phase needs egress, but must not reach internal addresses an
+    /// attacker-controlled `Cargo.lock` names. Putting it on a dedicated network
+    /// gives the host firewall a stable subnet to filter. The network must already
+    /// exist — `docker create` fails otherwise, which is deliberate: silently
+    /// falling back to the default bridge would mean an unfiltered egress path
+    /// while the config claims otherwise.
+    Named(&'a str),
 }
 
 /// cgroup limits for a container. A `None` field imposes no limit.
@@ -207,7 +217,7 @@ pub struct ContainerSpec<'a> {
     pub env: &'a [(&'a str, &'a str)],
     /// `(volume_name, mount_path)` pairs.
     pub volumes: &'a [(&'a str, &'a str)],
-    pub network: Network,
+    pub network: Network<'a>,
     /// cgroup caps for the container (memory/CPU/PIDs).
     pub limits: ResourceLimits<'a>,
     /// Capability/privilege hardening for the container.
@@ -221,8 +231,11 @@ pub struct ContainerSpec<'a> {
 /// be unit-tested without a running daemon.
 fn create_args(spec: &ContainerSpec<'_>) -> Vec<String> {
     let mut args: Vec<String> = vec!["create".into()];
-    if spec.network == Network::None {
-        args.push("--network=none".into());
+    match spec.network {
+        // Bridge is the daemon default, so it emits no flag.
+        Network::Bridge => {}
+        Network::None => args.push("--network=none".into()),
+        Network::Named(name) => args.push(format!("--network={name}")),
     }
     // Privilege hardening (docs/security.md, G6): a sandbox that compiles
     // untrusted code needs no capabilities and must not let a setuid binary
@@ -497,6 +510,27 @@ mod tests {
         assert!(!joined.contains("--security-opt"), "{joined}");
         // Bridge is the daemon default, so no --network flag is emitted.
         assert!(!joined.contains("--network"), "{joined}");
+    }
+
+    #[test]
+    fn create_args_emit_a_named_network() {
+        // The G4-b seam: the fetch phase can be pinned to a pre-created,
+        // egress-filtered network instead of the default bridge.
+        let spec = ContainerSpec {
+            image: "img",
+            entrypoint: None,
+            argv: &[],
+            workdir: "/w",
+            env: &[],
+            volumes: &[],
+            network: Network::Named("sorofy-fetch"),
+            limits: ResourceLimits::default(),
+            security: SecurityOpts::default(),
+        };
+        let joined = create_args(&spec).join(" ");
+        assert!(joined.contains("--network=sorofy-fetch"), "{joined}");
+        // Not the isolation flag: a named network still has egress.
+        assert!(!joined.contains("--network=none"), "{joined}");
     }
 
     #[test]

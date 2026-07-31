@@ -1,6 +1,6 @@
 # ADR-0001: Egress control for the in-container `cargo fetch` phase (G4-b)
 
-**Status:** Proposed
+**Status:** Accepted — code seam implemented; firewall rules pending deploy (0.7)
 **Date:** 2026-07-31
 **Deciders:** Sorofy maintainer/operator (single-tenant testnet)
 **Related:** [`docs/security.md`](../security.md) G4 · roadmap item 0.10 · [`reproduce.rs`](../../crates/verifier-core/src/reproduce.rs)
@@ -159,10 +159,13 @@ fetch network is exactly where a proxy would be injected for multi-tenant/M2).
 
 ## Action Items
 
-1. [ ] **Code:** let a `ContainerSpec` request a named docker network (extend `Network` or add a
-       network field in [`docker.rs`](../../crates/verifier-core/src/docker.rs)); run the fetch
-       container on `sorofy-fetch` instead of the default bridge. Unit-test the emitted
-       `--network sorofy-fetch` flag; keep build on `--network=none`.
+1. [x] **Code:** `Network::Named` in [`docker.rs`](../../crates/verifier-core/src/docker.rs)
+       emits `--network=<name>`; the fetch phase selects it via `VERIFY_FETCH_NETWORK`
+       (`reproduce.rs`, unset ⇒ default bridge), build stays `--network=none`. Unit-tested
+       (flag emission + the env→network mapping) and live-verified end-to-end on a real
+       `sorofy-fetch` network, with the default path confirmed unchanged. Opt-in rather than
+       defaulted: the network must be pre-created (and firewalled) by deploy, and a missing
+       one fails loudly instead of silently falling back to unfiltered egress.
 2. [ ] **Deploy (0.7):** create the `sorofy-fetch` network and install `DOCKER-USER` DROP rules
        for internal ranges targeting its subnet; document in the deploy playbook.
 3. [ ] **Verification:** add a deploy smoke test — from the fetch network, a connection to

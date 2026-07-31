@@ -61,6 +61,35 @@ const BUILD_SECURITY: crate::docker::SecurityOpts = crate::docker::SecurityOpts 
     no_new_privileges: true,
 };
 
+/// Which docker network the fetch phase runs on (docs/adr/0001-fetch-egress-control.md).
+///
+/// `VERIFY_FETCH_NETWORK` names a pre-created, egress-filtered network; unset
+/// keeps the default bridge, i.e. today's behaviour. Opt-in because the control
+/// that makes it *mean* anything — host firewall rules dropping traffic from that
+/// network to internal ranges — is deploy config (roadmap 0.7): defaulting it on
+/// would name a network that does not exist and break every build, and silently
+/// creating one would give unfiltered egress under a name that implies filtering.
+///
+/// The build phase is unaffected: it is `--network=none` and reaches nothing.
+fn fetch_network() -> Network<'static> {
+    static NETWORK: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    let configured = NETWORK.get_or_init(|| {
+        std::env::var("VERIFY_FETCH_NETWORK")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+    });
+    network_for(configured.as_deref())
+}
+
+/// Pure selection behind [`fetch_network`], so the mapping is unit-testable
+/// without touching process environment.
+fn network_for(configured: Option<&str>) -> Network<'_> {
+    match configured {
+        Some(name) if !name.trim().is_empty() => Network::Named(name),
+        _ => Network::Bridge,
+    }
+}
+
 /// One reproduction job.
 #[derive(Debug, Clone)]
 pub struct ReproductionRequest {
@@ -283,13 +312,13 @@ fn fetch_dependencies(
         workdir,
         env: &[("CARGO_HOME", CARGO_HOME)],
         volumes: &[(cargo_home.name(), CARGO_HOME)],
-        network: Network::Bridge,
+        network: fetch_network(),
         limits: BUILD_LIMITS,
         security: BUILD_SECURITY,
     })?;
     container.put_archive(STAGE_DIR, &source.tar)?;
 
-    tracing::info!("fetching dependencies (Cargo.lock, network on)");
+    tracing::info!(network = ?fetch_network(), "fetching dependencies (Cargo.lock, network on)");
     let run = container.run_to_completion(timeout)?;
     if run.exit_code != 0 {
         // Almost always a missing/stale Cargo.lock: --locked refuses to invent
@@ -426,6 +455,19 @@ mod tests {
                 .expect("append tar entry");
         }
         builder.into_inner().expect("finish tar")
+    }
+
+    #[test]
+    fn fetch_network_defaults_to_bridge_and_honours_a_configured_name() {
+        // Unset (or blank/whitespace) keeps today's behaviour: the default bridge.
+        assert_eq!(network_for(None), Network::Bridge);
+        assert_eq!(network_for(Some("")), Network::Bridge);
+        assert_eq!(network_for(Some("   ")), Network::Bridge);
+        // A configured name pins the fetch phase to that network.
+        assert_eq!(
+            network_for(Some("sorofy-fetch")),
+            Network::Named("sorofy-fetch")
+        );
     }
 
     #[test]

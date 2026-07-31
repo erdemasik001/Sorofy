@@ -237,7 +237,19 @@ TOCTOU. **Undocumented residuals found in review:**
   or an allowlisting proxy for the fetch phase. **Design decided in
   [ADR-0001](adr/0001-fetch-egress-control.md):** egress-filtered dedicated fetch
   network (host firewall on internal ranges) for testnet, keeping the app-layer guard;
-  allowlist proxy deferred to multi-tenant/M2. Implementation is deploy-coupled (0.7).
+  allowlist proxy deferred to multi-tenant/M2.
+
+  **Code seam landed (ADR action item 1).** `Network::Named` (`docker.rs`) emits
+  `--network=<name>`, and the fetch phase reads `VERIFY_FETCH_NETWORK` (`reproduce.rs`)
+  to run on a pre-created network instead of the default bridge; unset keeps today's
+  behaviour. Live-verified both ways: a full reproduction on a real `sorofy-fetch`
+  network (subnet `172.18.0.0/16`) produced the correct on-chain hash, and the default
+  path is unchanged. Deliberately opt-in and non-auto-creating: a network that does not
+  exist fails the run loudly, and silently creating one would give *unfiltered* egress
+  under a name implying filtering. **Still open:** the control that gives it meaning —
+  host firewall rules dropping that subnet to internal ranges, plus the deploy smoke
+  test — is deploy config (roadmap 0.7). Until those rules exist, fetch egress is
+  unfiltered.
 
 ### G6 — container hardening: closed
 The build/fetch containers run non-root (good) under the daemon's default seccomp
