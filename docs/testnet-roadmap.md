@@ -56,7 +56,7 @@ public exposure.
 - [x] **0.5 Persistence hardening** — versioned schema migrations (`user_version`, forward-only, downgrade-refusing) + `VACUUM INTO` snapshots, optionally periodic via `SOROFY_BACKUP_DIR`
 - [x] **0.6 Integration test lane** — `integration.yml` runs the `#[ignore]`d Docker/RPC tests (push:master + manual); `extract_wasm` selection split into offline-testable `select_wasm_from_tar`
 - [ ] **0.7 Deploy to testnet host** — VPS + Docker-out-of-Docker, live URL; API image built `--locked` *(blocked by 0.2–0.5, 0.9, 0.10)*
-- [ ] **0.8 Narrative update** — README/pitch reflect "testnet productization"
+- [x] **0.8 Narrative update** — README + pitch deck reflect the post-award posture: what Phase 0 delivered, and an honest "not yet true" list (deploy, fetch egress, trust levels, single verifier)
 - [x] **0.9 Sandbox hardening** — build resource limits (G1) + SSRF guard (G4), surfaced by 0.1 (commit `3541656`)
 - [ ] **0.10 Sandbox hardening completion (retrospective)** — G1 disk quota + `--memory-swap` ✅, G6 `--cap-drop=ALL`/`no-new-privileges` ✅, G4-a per-hop redirect re-validation ✅, G4-b fetch-egress **code seam** ✅ (`VERIFY_FETCH_NETWORK`); remaining: G4-b host firewall rules + smoke test, which land with 0.7 ([ADR-0001](adr/0001-fetch-egress-control.md))
 

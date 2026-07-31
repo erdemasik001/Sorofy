@@ -340,7 +340,7 @@
         <span class="chip"><span class="dot"></span>Rust · Axum · Docker</span>
         <span class="chip"><span class="dot"></span>Open source · MIT</span>
       </div>
-      <p class="hero__meta">SCF RFP — Contract Source Verification Service · hackathon MVP</p>
+      <p class="hero__meta">SCF RFP — Contract Source Verification Service · awarded MVP, now hardening for testnet</p>
     </div>
   </section>
 
@@ -563,15 +563,17 @@
             <li><b>Retroactive verify</b> byte-for-byte against the on-chain hash</li>
             <li><b>Digest enforcement with teeth</b> — bare tags rejected before any container</li>
             <li><b>Published GHCR image</b> (single-arch, <code>cff44167…</code>)</li>
-            <li><b>Cache survives restarts</b> (SQLite-backed)</li>
-            <li><b>Deploy artifacts ready</b> — Dockerfile (618 MB, build-verified), fly.toml, .dockerignore</li>
+            <li><b>Auth + rate limiting</b> — bearer token on <code>POST</code>, token bucket + bounded queue, <code>429</code> over either</li>
+            <li><b>Hardened sandbox</b> — mem/CPU/PID/swap caps, <code>--cap-drop=ALL</code>, <code>no-new-privileges</code>, SSRF guard re-validating every redirect hop</li>
+            <li><b>Operable</b> — <code>/health</code>, <code>/metrics</code>, structured logs, schema migrations, cache snapshots</li>
+            <li><b>Proven in CI</b> — the real Docker/RPC reproduction suite runs on every merge, not just by hand</li>
           </ul>
         </div>
         <div class="col col--deferred">
-          <p class="col__h">Deliberately deferred</p>
+          <p class="col__h">Not yet true</p>
           <ul>
-            <li><b>No live public URL</b> — Fly.io now needs a card + ~$5/mo and a reachable Docker daemon; the VPS path is one <code>docker run</code> away</li>
-            <li><b>No auth / rate-limiting</b> — mandatory before exposing the socket-mounted service; first hardening item</li>
+            <li><b>No live public URL</b> — needs a reachable Docker daemon (Fly.io now wants a card + ~$5/mo); the VPS path is one <code>docker run</code> away. The last Phase 0 item.</li>
+            <li><b>Fetch-phase egress unfiltered</b> — the code seam is in (<code>VERIFY_FETCH_NETWORK</code>); the host firewall rules that give it teeth land with the deploy</li>
             <li><b>trust_level hardcoded <code>arbitrary</code></b> — the allowlist / multi-verifier surface (M2) is where the other tiers come from</li>
             <li><b>Single verifier</b> — decentralization is architected for, not yet built</li>
           </ul>

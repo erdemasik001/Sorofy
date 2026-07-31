@@ -2,14 +2,18 @@
 
 An open-source, multi-verifier source verification service that proves a Soroban smart contract's on-chain WASM bytes were built from the public source code shown on explorers.
 
-> **Status: MVP complete and proven end-to-end** (Day0–Day3). The engine reproduces a
-> real testnet contract byte-for-byte against its on-chain hash, the retroactive path is
-> proven, and the build image is published to GHCR with digest enforcement on. Production
-> deployment and the differentiating M2/M3 work (decentralization, retroactive registry,
-> mainnet + audit) are the **funded roadmap**, resumed on SCF acceptance — this repo is
-> committed at the MVP boundary on purpose. See [PLAN.md](PLAN.md) for the day-by-day build
-> log, [the roadmap](#roadmap--what-happens-after-this-mvp) for what's next, and
-> [idea1-project-brief.md](idea1-project-brief.md) for the full brief.
+> **Status: the MVP was awarded by the SCF; work has resumed on turning it into a
+> testnet-grade product.** The engine reproduces a real testnet contract byte-for-byte
+> against its on-chain hash, the retroactive path is proven, and the build image is
+> published to GHCR with digest enforcement on. Since the award, the service has gained
+> bearer-token auth, rate limiting + a bounded job queue, `/health` + `/metrics` +
+> structured request logs, schema migrations + cache snapshots, a sandbox hardened against
+> the findings of a security review, and a CI lane that runs the real Docker/RPC tests.
+> **What's left before a public testnet URL is the deploy itself** (see
+> [honest status](#roadmap--what-happens-next)). Roadmap:
+> [docs/testnet-roadmap.md](docs/testnet-roadmap.md) · threat model:
+> [docs/security.md](docs/security.md) · MVP build log: [PLAN.md](PLAN.md) · full brief:
+> [idea1-project-brief.md](idea1-project-brief.md).
 
 ## Problem
 
@@ -39,13 +43,15 @@ flowchart TD
     store -.-> next
 ```
 
-## MVP scope
+## What the service does today
 
 - Verification flow: source (git repo/commit **or** SEP-58 `source_uri` archive) → deterministic, network-isolated Docker rebuild → sha256 compare against the on-chain hash
-- REST API: `POST /verify`, `GET /verify/{id|contract_id|wasm_hash}`, SQLite result cache (survives restarts)
+- REST API: `POST /verify` (bearer-token auth, rate-limited, bounded queue), `GET /verify/{id|contract_id|wasm_hash}`, plus `GET /health` and `GET /metrics`
+- SQLite result cache with versioned schema migrations and `VACUUM INTO` snapshots — results survive restarts and upgrades
 - On-chain WASM hash resolved from Soroban RPC — the caller cannot assert the target
+- Sandbox: `--network=none` build, non-root, no bind mounts, memory/CPU/PID/swap caps, `--cap-drop=ALL`, `no-new-privileges`, SSRF-guarded source fetch ([docs/security.md](docs/security.md))
 - Testnet only
-- Multi-verifier decentralization and the retroactive *registry* are architected for but out of MVP scope — see the [roadmap](#roadmap--what-happens-after-this-mvp).
+- Multi-verifier decentralization and the retroactive *registry* are architected for but not yet built — see the [roadmap](#roadmap--what-happens-next).
 
 ### What's proven (every row is a real run, not a mockup)
 
@@ -56,6 +62,8 @@ flowchart TD
 | Real-size, on-chain | A token contract built in the pinned image, deployed to testnet ([`CAZAVVTM…`](https://stellar.expert/explorer/testnet/contract/CAZAVVTM3GXFNCLR66FYHJJ43MEEUV3C6PQYRQT5JVGAO2RS6S4OHRT6)), reproduced byte-for-byte against its RPC-resolved hash (`47d2801e…`) — [day2](docs/day2-api.md) |
 | Retroactive path | The same contract carries **no** SEP-58 metadata on-chain, yet is verified from out-of-band source — [day3](docs/day3-deploy-demo.md) |
 | Real `bldimg` digest | Image published to GHCR (single-arch, `sha256:cff44167…`); digest enforcement on by default — bare tags rejected before any container — [day3](docs/day3-deploy-demo.md) |
+| Hardening doesn't break the build | The same fixture still reproduces byte-for-byte with the swap/capability/privilege caps applied and the fetch phase pinned to a dedicated network — [security.md](docs/security.md) |
+| Tested in CI, not just locally | The `#[ignore]`d suite — 6 reproduction cases (real containers) + live RPC lookups — runs on merges to `master` via [`integration.yml`](.github/workflows/integration.yml) |
 
 ### Differentiation (why us)
 
@@ -79,15 +87,21 @@ docker/
   build-image/     # digest-pinned build image (SEP-58 `bldimg`) + publish.sh
   api/             # runtime image for the sorofy-api service (Day3)
 docs/
-  sep-58-notes.md              # SEP-58 field reference our verifier consumes
+  testnet-roadmap.md            # post-award roadmap: Phase 0-3, live status
+  security.md                   # threat model + gap register (G1-G6), audit status
+  adr/                          # architecture decision records
+  sep-58-notes.md               # SEP-58 field reference our verifier consumes
   day0-reproduction-findings.md # manual reproduction + determinism experiments
   day1-build-engine.md          # build engine results, sandbox design, friction log
   day2-api.md                   # REST API, on-chain lookup, cache, real-size build
   day3-deploy-demo.md           # retroactive path, publish, deploy-readiness, demo
   pitch-deck.html               # 8-slide jury pitch (self-contained HTML)
+.github/workflows/
+  ci.yml             # offline gate: fmt · clippy · build · test (every push/PR)
+  integration.yml    # the #[ignore]d Docker/RPC tests (master + on demand)
 scripts/
   demo.ps1           # local demo runner (retroactive verify + tamper→mismatch)
-PLAN.md            # day-by-day MVP build plan
+PLAN.md            # day-by-day MVP build plan (complete; superseded by the roadmap)
 ```
 
 ## The build engine
@@ -149,6 +163,35 @@ curl localhost:8080/verify/CAZAVVTM3GXFNCLR66FYHJJ43MEEUV3C6PQYRQT5JVGAO2RS6S4OH
 `verified` / `mismatch` / `error` / `404 not_found`. SQLite-backed; results
 survive restarts.
 
+### Operating it
+
+`POST /verify` spends build capacity and drives the Docker socket, so it is gated;
+`GET` stays public — a cheap cached lookup is the whole point of the service.
+
+```bash
+SOROFY_API_TOKEN=… cargo run -p api --bin sorofy-api   # POST requires the token
+curl -X POST localhost:8080/verify -H "Authorization: Bearer $SOROFY_API_TOKEN" …
+
+curl localhost:8080/health    # {"status":"ok"} — liveness + cache ping (503 if degraded)
+curl localhost:8080/metrics   # job counters: submitted / in_flight / verified / mismatch / error / avg_build_seconds
+```
+
+Over the rate limit or with too many jobs already in flight, `POST` returns `429`
+(with `Retry-After` when it is the rate limit). Every request is logged with method,
+path, status, and latency — never headers or bodies, so tokens are not captured.
+
+| Env | Default | Purpose |
+|---|---|---|
+| `SOROFY_BIND` | `127.0.0.1:8080` | listen address |
+| `SOROFY_DB` | `sorofy.db` | SQLite cache path |
+| `SOROFY_RPC` | public testnet | Soroban RPC endpoint |
+| `SOROFY_API_TOKEN` | *(unset ⇒ open)* | bearer token for `POST /verify`; **set before exposing the service** |
+| `SOROFY_ALLOW_UNPINNED_IMAGE` | off | accept a non-digest `bldimg` (local dev) |
+| `SOROFY_BACKUP_DIR` | *(unset ⇒ off)* | write periodic cache snapshots here |
+| `SOROFY_BACKUP_INTERVAL_HOURS` | `24` | snapshot interval |
+| `VERIFY_DOCKER` | autodetect | how to invoke docker (e.g. `wsl -d Ubuntu -- docker`) |
+| `VERIFY_FETCH_NETWORK` | *(unset ⇒ bridge)* | run the fetch phase on a pre-created, egress-filtered network ([ADR-0001](docs/adr/0001-fetch-egress-control.md)) |
+
 ### Retroactive verification (no on-chain source metadata)
 
 The same contract carries **no SEP-58 source fields** on-chain, yet it can still
@@ -183,49 +226,68 @@ cargo test --workspace         # offline unit tests
 docker build --platform linux/amd64 \
   -t sorofy/build-image:rust1.91.1-cli23.2.1 docker/build-image
 
-# End-to-end reproduction tests: rebuild the published fixture in a container
-# and check the four verified/mismatch cases. Needs Docker + the image above,
-# so they are #[ignore]d out of the default run.
-cargo test -p verifier-core -- --ignored
+# End-to-end tests: rebuild the published fixture in a container and check the
+# verified / mismatch / tampered / dirty-tree / archive cases, plus live RPC
+# lookups. They need Docker + the image above + network, so they are #[ignore]d
+# out of the default run.
+cargo test --workspace -- --ignored
 ```
+
+Two CI lanes: [`ci.yml`](.github/workflows/ci.yml) runs the offline gate
+(fmt · clippy · build · test) on every push and PR, and
+[`integration.yml`](.github/workflows/integration.yml) runs the `#[ignore]`d
+Docker/RPC suite against the published image on merges to `master` and on demand —
+so the heavyweight, network-dependent tests are proven in CI without slowing PRs.
 
 On the Linux deploy target this is native Docker; for local dev on Windows we run Docker
 Engine inside WSL2 (Ubuntu) rather than Docker Desktop. `verify-core` detects that and
 shells into WSL automatically — override with `VERIFY_DOCKER="wsl -d Ubuntu -- docker"`.
 
-## Roadmap — what happens after this MVP
+## Roadmap — what happens next
 
-The MVP proves the core claim (source → on-chain bytecode, including the retroactive case).
-Everything beyond this line is the **funded SCF roadmap** and resumes on acceptance; the repo
-is committed at the MVP boundary deliberately. Full pitch: [docs/pitch-deck.html](docs/pitch-deck.html).
+The MVP proved the core claim (source → on-chain bytecode, including the retroactive case) and
+was awarded by the SCF. Work since then has been **Phase 0: making it deployable to testnet** —
+the security, auth, and operability work a socket-mounted service needs before it faces the
+internet. Live status: [docs/testnet-roadmap.md](docs/testnet-roadmap.md). Full pitch:
+[docs/pitch-deck.html](docs/pitch-deck.html).
 
-**Deliberately out of MVP scope (honest status).** Each of these is designed for, not hand-waved:
+**Done since the award (Phase 0).** Each closes a gap from the threat model in
+[docs/security.md](docs/security.md):
 
-- **No live public URL yet** — a live deploy needs a reachable Docker daemon, and Fly.io now
-  requires a card (~$5/mo). Deploy artifacts are ready ([`docker/api/Dockerfile`](docker/api/Dockerfile),
+- **Auth** — bearer token on `POST /verify`, constant-time compared; `GET` stays public (G2).
+- **Rate limiting + bounded queue** — per-principal token bucket and a cap on outstanding jobs;
+  over either, `POST` returns `429` (G3).
+- **Sandbox hardening** — memory/CPU/PID caps plus `--memory-swap`, `--cap-drop=ALL`,
+  `--security-opt=no-new-privileges`, and a disk-quota hook (G1, G6).
+- **SSRF hardening** — the source fetch resolves and refuses internal addresses, and now
+  re-validates **every redirect hop** rather than only the first URL (G4-a).
+- **Observability** — `/health`, `/metrics`, structured per-request logs.
+- **Persistence** — versioned schema migrations (forward-only, refuses a newer schema) and
+  consistent `VACUUM INTO` cache snapshots.
+- **Integration CI lane** — the real Docker/RPC reproduction tests now run in CI, not just by hand.
+
+**Honest status — what is still not true:**
+
+- **No live public URL yet.** Deploy artifacts are ready ([`docker/api/Dockerfile`](docker/api/Dockerfile),
   [`fly.toml`](fly.toml), `.dockerignore`) and the VPS path is one `docker run` away — see
-  [day3 "Deploy-readiness"](docs/day3-deploy-demo.md).
-- **No auth / rate-limiting yet** — mandatory before exposing the socket-mounted service; the first
-  hardening item below.
-- **`trust_level` hardcoded `arbitrary`** — the field is wired end-to-end; the allowlist that promotes
-  it to `publicly-auditable` / `sdf-maintained` is M2.
+  [day3 "Deploy-readiness"](docs/day3-deploy-demo.md). This is the remaining Phase 0 item.
+- **Fetch-phase egress is not yet filtered.** The dependency-fetch container can still reach
+  internal addresses named by an attacker-controlled `Cargo.lock`. The code seam is in
+  (`VERIFY_FETCH_NETWORK`); the host firewall rules that give it teeth land with the deploy —
+  [ADR-0001](docs/adr/0001-fetch-egress-control.md) (G4-b).
+- **`trust_level` hardcoded `arbitrary`** — the field is wired end-to-end; the allowlist that
+  promotes it to `publicly-auditable` / `sdf-maintained` is Phase 1.
 - **Single verifier** — decentralization is architected for, not yet built.
 
-**Next up — go live (M0 → M1 hardening).**
+**M2 — Testnet milestone · trust model, retroactive registry, decentralization**
+*(+4–6 weeks; [Phases 1–3](docs/testnet-roadmap.md), built on the live service)*
 
-1. Deploy to a Docker-capable host: a VPS running the API as Docker-out-of-Docker over a mounted
-   socket (recommended over Fly's in-VM `dockerd`). The exact commands are in
-   [day3](docs/day3-deploy-demo.md).
-2. Harden for public exposure: bearer-token auth on `POST /verify` + rate-limiting. `GET` stays
-   public — it's a cheap public lookup, which is the whole point of the service.
-
-**M2 — Testnet · decentralization + retroactive registry** *(+4–6 weeks)*
-
+- **Trust-level allowlist** (Phase 1): promote `trust_level` beyond `arbitrary` from a vetted
+  image list — the `TrustLevel` enum and response schema are already wired end-to-end.
+- Off-chain **retroactive registry** (Phase 2): attach `source_uri` + `source_sha256` + a vetted
+  `bldimg` to pre-SEP-58 contracts that can't embed metadata — the engine side is already proven above.
 - Multiple independent verifier instances publishing the same result, with an architecture that
-  **surfaces disagreement** (the RFP's hard requirement).
-- Off-chain **retroactive registry**: attach `source_uri` + `source_sha256` + a vetted `bldimg` to
-  pre-SEP-58 contracts that can't embed metadata — the engine side is already proven above.
-- **Trust-level allowlist**: promote `trust_level` beyond `arbitrary` from a vetted image list.
+  **surfaces disagreement** (Phase 3 — the RFP's hard requirement).
 
 **M3 — Mainnet · ship + integrate** *(+4–8 weeks)*
 
