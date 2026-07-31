@@ -53,7 +53,7 @@ public exposure.
 - [x] **0.2 Auth** — bearer token on `POST /verify`, `GET` public (commit `7504dac`)
 - [x] **0.3 Rate-limiting** — per-principal token-bucket rate limit + bounded admission queue on `POST /verify` (G3)
 - [x] **0.4 Observability** — `GET /health` (liveness + db ping), `GET /metrics` (job counters), structured per-request logs
-- [ ] **0.5 Persistence hardening** — schema migrations + volume backup
+- [x] **0.5 Persistence hardening** — versioned schema migrations (`user_version`, forward-only, downgrade-refusing) + `VACUUM INTO` snapshots, optionally periodic via `SOROFY_BACKUP_DIR`
 - [x] **0.6 Integration test lane** — `integration.yml` runs the `#[ignore]`d Docker/RPC tests (push:master + manual); `extract_wasm` selection split into offline-testable `select_wasm_from_tar`
 - [ ] **0.7 Deploy to testnet host** — VPS + Docker-out-of-Docker, live URL; API image built `--locked` *(blocked by 0.2–0.5, 0.9, 0.10)*
 - [ ] **0.8 Narrative update** — README/pitch reflect "testnet productization"
