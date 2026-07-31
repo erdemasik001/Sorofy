@@ -22,6 +22,15 @@ use crate::rpc::{self, OnChainExecutable};
 /// How many container builds may run at once.
 const MAX_CONCURRENT_BUILDS: usize = 2;
 
+/// Total verification jobs allowed outstanding (running + queued) at once.
+///
+/// `MAX_CONCURRENT_BUILDS` caps how many run *simultaneously*; this caps how many
+/// may be accepted and pending at all — the admission bound. Past it, `POST /verify`
+/// returns 429 instead of spawning an unbounded backlog of tasks and pending DB
+/// rows (docs/security.md, G3). A few multiples above the build concurrency, so a
+/// short burst queues rather than being refused.
+const MAX_OUTSTANDING_JOBS: usize = 16;
+
 /// Everything a handler needs. Cheap to clone.
 #[derive(Clone)]
 pub struct AppState {
@@ -34,6 +43,9 @@ pub struct AppState {
     /// `main` warns loudly at startup when it is unset.
     pub api_token: Option<String>,
     build_slots: Arc<Semaphore>,
+    /// Admission control: caps total outstanding jobs (running + queued) so a
+    /// flood of POSTs cannot grow the backlog without bound (docs/security.md, G3).
+    admission: Arc<Semaphore>,
 }
 
 impl AppState {
@@ -51,6 +63,7 @@ impl AppState {
             allow_unpinned_image,
             api_token,
             build_slots: Arc::new(Semaphore::new(MAX_CONCURRENT_BUILDS)),
+            admission: Arc::new(Semaphore::new(MAX_OUTSTANDING_JOBS)),
         }
     }
 }
@@ -94,6 +107,7 @@ pub struct VerifyRequest {
 /// A caller mistake, reported as 400/401/404/500 with a reason.
 enum ApiError {
     Unauthorized,
+    TooManyRequests,
     BadRequest(String),
     NotFound(String),
     Internal(anyhow::Error),
@@ -105,6 +119,10 @@ impl IntoResponse for ApiError {
             ApiError::Unauthorized => (
                 StatusCode::UNAUTHORIZED,
                 "missing or invalid bearer token".to_string(),
+            ),
+            ApiError::TooManyRequests => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "too many verification jobs in flight; retry shortly".to_string(),
             ),
             ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
             ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
@@ -146,6 +164,16 @@ async fn start_verification(
     }
 
     let source = parse_source(&req)?;
+
+    // Admission control (docs/security.md, G3): bound total outstanding jobs.
+    // try_acquire is non-blocking, so excess load is rejected right here with 429
+    // rather than piling up spawned tasks, pending rows, and RPC lookups. The
+    // permit is held for the job's whole life and freed only when it finishes.
+    let admission = state
+        .admission
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| ApiError::TooManyRequests)?;
 
     // Resolve the target hash. With a contract_id the network is the authority;
     // a caller-supplied wasm_hash is only an anchor when there is nothing
@@ -199,7 +227,7 @@ async fn start_verification(
         allow_unpinned_image: state.allow_unpinned_image,
         emit_wasm: None,
     };
-    tokio::spawn(run_job(state.clone(), id, job));
+    tokio::spawn(run_job(state.clone(), id, job, admission));
 
     Ok((
         StatusCode::ACCEPTED,
@@ -273,7 +301,16 @@ fn parse_source(req: &VerifyRequest) -> Result<SourceRef, ApiError> {
 }
 
 /// Run one reproduction to completion and record the outcome.
-async fn run_job(state: AppState, id: i64, job: ReproductionRequest) {
+///
+/// `_admission` is the admission-control permit from `start_verification`; holding
+/// it for the whole job (until this function returns) is what makes an admission
+/// slot free up only once the job is fully done, not when it was merely accepted.
+async fn run_job(
+    state: AppState,
+    id: i64,
+    job: ReproductionRequest,
+    _admission: tokio::sync::OwnedSemaphorePermit,
+) {
     let permit = state
         .build_slots
         .clone()
@@ -467,6 +504,10 @@ mod tests {
             StatusCode::NOT_FOUND
         );
         assert_eq!(
+            ApiError::TooManyRequests.into_response().status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        assert_eq!(
             ApiError::Internal(anyhow::anyhow!("boom"))
                 .into_response()
                 .status(),
@@ -484,5 +525,51 @@ mod tests {
         // The correctly-spelled shape still deserializes.
         let good = serde_json::json!({ "bldimg": "img@sha256:abc", "wasm_hash": "aa" });
         assert!(serde_json::from_value::<VerifyRequest>(good).is_ok());
+    }
+
+    /// An AppState wired for handler tests: in-memory db, auth off, unpinned images
+    /// allowed. Docker is only *constructed* (no daemon contact) — admission rejects
+    /// before any reproduction runs, so no daemon is needed.
+    fn test_state() -> AppState {
+        AppState::new(
+            Db::open_in_memory().expect("in-memory db"),
+            Docker::autodetect(),
+            "http://rpc.invalid".into(),
+            true,
+            None,
+        )
+    }
+
+    #[tokio::test]
+    async fn admission_full_rejects_with_429() {
+        let state = test_state();
+
+        // Drain every admission slot, as if MAX_OUTSTANDING_JOBS jobs were in flight.
+        let mut held = Vec::new();
+        for _ in 0..MAX_OUTSTANDING_JOBS {
+            held.push(
+                state
+                    .admission
+                    .clone()
+                    .try_acquire_owned()
+                    .expect("slot should be free"),
+            );
+        }
+
+        // A well-formed POST is now refused at admission — before any RPC/DB/Docker.
+        let body = VerifyRequest {
+            repo: Some("https://example.com/x.git".into()),
+            rev: Some("abc".into()),
+            wasm_hash: Some("aa".into()),
+            ..req()
+        };
+        let err = start_verification(State(state.clone()), HeaderMap::new(), Json(body))
+            .await
+            .expect_err("admission is full");
+        assert!(matches!(err, ApiError::TooManyRequests));
+
+        // Freeing a slot restores capacity (the gate is not permanently latched).
+        held.pop();
+        assert_eq!(state.admission.available_permits(), 1);
     }
 }
