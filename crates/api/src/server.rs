@@ -5,7 +5,9 @@
 //! subprocesses — behind a small semaphore: container builds are heavyweight,
 //! and an unbounded queue of them is a self-inflicted denial of service.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -31,6 +33,79 @@ const MAX_CONCURRENT_BUILDS: usize = 2;
 /// short burst queues rather than being refused.
 const MAX_OUTSTANDING_JOBS: usize = 16;
 
+/// Rate limit on accepted `POST /verify`, per principal (docs/security.md, G3):
+/// sustained requests per second, and the burst a caller may spend at once.
+/// Admission already bounds *outstanding* work; this bounds the *rate* of new
+/// work, so a caller cannot churn the RPC/DB lookups as fast as slots free.
+const RATE_LIMIT_REFILL_PER_SEC: f64 = 1.0;
+const RATE_LIMIT_BURST: f64 = 10.0;
+
+/// Cap on distinct principals the limiter tracks, so its own map cannot grow
+/// without bound; when full, idle (fully-refilled) buckets are evicted first.
+const MAX_TRACKED_CLIENTS: usize = 4096;
+
+/// A token-bucket rate limiter keyed by principal. Cheap to clone (shared inner).
+#[derive(Clone)]
+struct RateLimiter {
+    inner: Arc<Mutex<HashMap<String, Bucket>>>,
+    burst: f64,
+    refill_per_sec: f64,
+    max_clients: usize,
+}
+
+#[derive(Clone, Copy)]
+struct Bucket {
+    tokens: f64,
+    last: Instant,
+}
+
+/// Tokens `b` would hold at `now`, capped at `burst`.
+fn refilled(b: &Bucket, now: Instant, burst: f64, refill_per_sec: f64) -> f64 {
+    let elapsed = now.saturating_duration_since(b.last).as_secs_f64();
+    (b.tokens + elapsed * refill_per_sec).min(burst)
+}
+
+impl RateLimiter {
+    fn new(burst: f64, refill_per_sec: f64, max_clients: usize) -> Self {
+        RateLimiter {
+            inner: Arc::new(Mutex::new(HashMap::new())),
+            burst,
+            refill_per_sec,
+            max_clients,
+        }
+    }
+
+    /// Allow one request for `key`, or return how long until a token frees up.
+    fn check(&self, key: &str) -> Result<(), Duration> {
+        self.check_at(key, Instant::now())
+    }
+
+    /// `check` with an injected clock, so the bucket maths are unit-testable.
+    fn check_at(&self, key: &str, now: Instant) -> Result<(), Duration> {
+        let mut map = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        // Bound the map: when it is full and this is a new key, drop buckets that
+        // have fully refilled (idle clients). If none have, every tracked client
+        // is active — allow the insert rather than wrongly throttle a real caller.
+        if map.len() >= self.max_clients && !map.contains_key(key) {
+            let (burst, refill) = (self.burst, self.refill_per_sec);
+            map.retain(|_, b| refilled(b, now, burst, refill) < burst);
+        }
+        let bucket = map.entry(key.to_string()).or_insert(Bucket {
+            tokens: self.burst,
+            last: now,
+        });
+        bucket.tokens = refilled(bucket, now, self.burst, self.refill_per_sec);
+        bucket.last = now;
+        if bucket.tokens >= 1.0 {
+            bucket.tokens -= 1.0;
+            Ok(())
+        } else {
+            let wait = (1.0 - bucket.tokens) / self.refill_per_sec;
+            Err(Duration::from_secs_f64(wait))
+        }
+    }
+}
+
 /// Everything a handler needs. Cheap to clone.
 #[derive(Clone)]
 pub struct AppState {
@@ -46,6 +121,8 @@ pub struct AppState {
     /// Admission control: caps total outstanding jobs (running + queued) so a
     /// flood of POSTs cannot grow the backlog without bound (docs/security.md, G3).
     admission: Arc<Semaphore>,
+    /// Per-principal request-rate limit on `POST /verify` (docs/security.md, G3).
+    rate_limiter: RateLimiter,
 }
 
 impl AppState {
@@ -64,6 +141,11 @@ impl AppState {
             api_token,
             build_slots: Arc::new(Semaphore::new(MAX_CONCURRENT_BUILDS)),
             admission: Arc::new(Semaphore::new(MAX_OUTSTANDING_JOBS)),
+            rate_limiter: RateLimiter::new(
+                RATE_LIMIT_BURST,
+                RATE_LIMIT_REFILL_PER_SEC,
+                MAX_TRACKED_CLIENTS,
+            ),
         }
     }
 }
@@ -107,7 +189,10 @@ pub struct VerifyRequest {
 /// A caller mistake, reported as 400/401/404/500 with a reason.
 enum ApiError {
     Unauthorized,
+    /// Admission queue full — too many jobs already outstanding.
     TooManyRequests,
+    /// Per-principal request rate exceeded; carries the suggested wait.
+    RateLimited(Duration),
     BadRequest(String),
     NotFound(String),
     Internal(anyhow::Error),
@@ -115,23 +200,38 @@ enum ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let (code, msg) = match self {
+        let (code, msg, retry_after_secs) = match self {
             ApiError::Unauthorized => (
                 StatusCode::UNAUTHORIZED,
                 "missing or invalid bearer token".to_string(),
+                None,
             ),
             ApiError::TooManyRequests => (
                 StatusCode::TOO_MANY_REQUESTS,
                 "too many verification jobs in flight; retry shortly".to_string(),
+                None,
             ),
-            ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
-            ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
+            ApiError::RateLimited(retry_after) => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "rate limit exceeded; slow down".to_string(),
+                // Round up to a whole second, and never advertise 0.
+                Some(retry_after.as_secs_f64().ceil().max(1.0) as u64),
+            ),
+            ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg, None),
+            ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, msg, None),
             ApiError::Internal(err) => {
                 tracing::error!(error = %err, "internal error");
-                (StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}"))
+                (StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}"), None)
             }
         };
-        (code, Json(serde_json::json!({ "error": msg }))).into_response()
+        let mut resp = (code, Json(serde_json::json!({ "error": msg }))).into_response();
+        if let Some(secs) = retry_after_secs {
+            resp.headers_mut().insert(
+                axum::http::header::RETRY_AFTER,
+                secs.to_string().parse().expect("integer is a valid header"),
+            );
+        }
+        resp
     }
 }
 
@@ -161,6 +261,17 @@ async fn start_verification(
     // whole point of the service.
     if !is_authorized(state.api_token.as_deref(), &headers) {
         return Err(ApiError::Unauthorized);
+    }
+
+    // Rate-limit accepted callers (docs/security.md, G3). Keyed by principal, so a
+    // leaked token is throttled in aggregate however many hosts replay it. Checked
+    // after auth: an unauthenticated flood is already cheap (401) and must not be
+    // able to fill the limiter's map.
+    if let Err(retry_after) = state
+        .rate_limiter
+        .check(&rate_limit_key(state.api_token.as_deref(), &headers))
+    {
+        return Err(ApiError::RateLimited(retry_after));
     }
 
     let source = parse_source(&req)?;
@@ -248,7 +359,13 @@ fn is_authorized(expected: Option<&str>, headers: &HeaderMap) -> bool {
     let Some(expected) = expected else {
         return true;
     };
-    let provided = headers
+    let provided = bearer_token(headers).unwrap_or("");
+    constant_time_eq(provided.as_bytes(), expected.as_bytes())
+}
+
+/// The token from an `Authorization: Bearer <token>` header, if well-formed.
+fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+    headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|s| {
@@ -260,8 +377,18 @@ fn is_authorized(expected: Option<&str>, headers: &HeaderMap) -> bool {
                 _ => None,
             }
         })
-        .unwrap_or("");
-    constant_time_eq(provided.as_bytes(), expected.as_bytes())
+}
+
+/// Rate-limit key = the authenticated principal. With auth on that is the bearer
+/// token (so a leaked token is throttled in aggregate across every host replaying
+/// it); with auth off (local dev), all callers share one bucket.
+fn rate_limit_key(api_token: Option<&str>, headers: &HeaderMap) -> String {
+    match api_token {
+        Some(_) => bearer_token(headers)
+            .map(|t| format!("tok:{t}"))
+            .unwrap_or_else(|| "anon".to_string()),
+        None => "anon".to_string(),
+    }
 }
 
 /// Length-then-content equality that does not short-circuit on the first
@@ -507,6 +634,16 @@ mod tests {
             ApiError::TooManyRequests.into_response().status(),
             StatusCode::TOO_MANY_REQUESTS
         );
+        // Rate-limit rejection is 429 and advertises a Retry-After (rounded up).
+        let limited = ApiError::RateLimited(Duration::from_millis(2500)).into_response();
+        assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            limited
+                .headers()
+                .get(axum::http::header::RETRY_AFTER)
+                .unwrap(),
+            "3"
+        );
         assert_eq!(
             ApiError::Internal(anyhow::anyhow!("boom"))
                 .into_response()
@@ -571,5 +708,63 @@ mod tests {
         // Freeing a slot restores capacity (the gate is not permanently latched).
         held.pop();
         assert_eq!(state.admission.available_permits(), 1);
+    }
+
+    #[test]
+    fn rate_limiter_allows_burst_then_blocks_then_refills() {
+        let rl = RateLimiter::new(3.0, 1.0, 16);
+        let t0 = Instant::now();
+        // A burst of 3 is allowed at one instant.
+        assert!(rl.check_at("p", t0).is_ok());
+        assert!(rl.check_at("p", t0).is_ok());
+        assert!(rl.check_at("p", t0).is_ok());
+        // The 4th at the same instant is limited, with a positive wait hint.
+        let wait = rl.check_at("p", t0).expect_err("bucket is empty");
+        assert!(wait > Duration::ZERO);
+        // One second on, exactly one token has refilled: one more, then blocked.
+        let t1 = t0 + Duration::from_secs(1);
+        assert!(rl.check_at("p", t1).is_ok());
+        assert!(rl.check_at("p", t1).is_err());
+        // A different principal has its own independent bucket.
+        assert!(rl.check_at("other", t0).is_ok());
+    }
+
+    #[test]
+    fn rate_limit_key_is_token_when_auth_on_else_anon() {
+        // Auth on → keyed by the presented bearer token (per-principal).
+        assert_eq!(
+            rate_limit_key(Some("s3cret"), &headers_with_auth("Bearer abc")),
+            "tok:abc"
+        );
+        // Auth on but no/blank token → a shared fallback bucket.
+        assert_eq!(rate_limit_key(Some("s3cret"), &HeaderMap::new()), "anon");
+        // Auth off → everyone shares one bucket.
+        assert_eq!(
+            rate_limit_key(None, &headers_with_auth("Bearer abc")),
+            "anon"
+        );
+    }
+
+    #[tokio::test]
+    async fn rate_limited_principal_gets_429() {
+        let state = test_state(); // auth off → the handler keys on "anon"
+                                  // Spend the whole burst for the key the handler will use.
+        for _ in 0..RATE_LIMIT_BURST as u32 {
+            state
+                .rate_limiter
+                .check("anon")
+                .expect("burst is available");
+        }
+        // The next POST is refused at the rate limiter — before parse/admission/RPC.
+        let body = VerifyRequest {
+            repo: Some("https://example.com/x.git".into()),
+            rev: Some("abc".into()),
+            wasm_hash: Some("aa".into()),
+            ..req()
+        };
+        let err = start_verification(State(state.clone()), HeaderMap::new(), Json(body))
+            .await
+            .expect_err("rate limited");
+        assert!(matches!(err, ApiError::RateLimited(_)));
     }
 }

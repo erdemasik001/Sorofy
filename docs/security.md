@@ -110,10 +110,15 @@ capacity and exercise the socket-mounted daemon indirectly. → Phase 0.2 (auth 
 builds, but `start_verification` inserts a row and `tokio::spawn`s a job per
 request with no admission control — an attacker can enqueue unboundedly, growing
 memory and the pending backlog. → Phase 0.3 (per-token/IP rate limit + a bounded
-queue). **Partially closed:** the bounded queue is done (G3-a) — a
-`MAX_OUTSTANDING_JOBS` admission semaphore in `server.rs` `try_acquire`s per POST
-and returns 429 when full, so the backlog can no longer grow without bound. The
-per-token/IP rate limit (G3-b) is still open.
+queue). **Closed.** Both halves are in `server.rs`: (G3-a) a
+`MAX_OUTSTANDING_JOBS` admission semaphore `try_acquire`s per POST and returns 429
+when full, so the backlog can no longer grow without bound; (G3-b) a per-principal
+token-bucket rate limit (`RATE_LIMIT_BURST`/`RATE_LIMIT_REFILL_PER_SEC`) caps the
+request *rate* on accepted POSTs and returns 429 + `Retry-After`. Keyed on the
+bearer token, so a leaked token is throttled in aggregate however many hosts replay
+it (per-IP granularity is a future option if the service goes multi-tenant); with
+auth off, callers share one bucket. The limiter's own map is bounded
+(`MAX_TRACKED_CLIENTS`, idle buckets evicted first).
 
 ### S4 — Server-Side Request Forgery via source fetch *(medium-high)*
 
@@ -156,7 +161,7 @@ further layer. No known gap; revisit when multi-verifier (Phase 3) lands.
 |---|---|---|---|
 | **G1** | No memory/CPU/PID/disk limits on the build container | High | Sandbox hardening (`3541656` + follow-up) — **done**: mem/CPU/PID/swap ✅; disk quota wired (`--storage-opt size=`), opt-in per storage driver (see status update) |
 | **G2** | No auth on `POST /verify` | High | Phase 0.2 |
-| **G3** | No rate limit / unbounded job queue | High | Phase 0.3 — **partially done**: bounded admission queue ✅ (G3-a); per-token/IP rate limit ✗ (G3-b) |
+| **G3** | No rate limit / unbounded job queue | High | Phase 0.3 — **done**: bounded admission queue ✅ (G3-a) + per-principal token-bucket rate limit ✅ (G3-b) |
 | **G4** | SSRF via submitter-supplied source URI / repo | Med-High | Sandbox hardening (`3541656` + follow-up) — **partially done**: host-fetch guard ✅, redirect-hop re-validation ✅ (G4-a); in-container `cargo fetch` egress ✗ (G4-b, see status update) |
 | **G5** | Socket mount = host root (tenancy) | Med | Accepted single-tenant; rootless/proxy tracked for post-M2 |
 | **G6** | No `--cap-drop=ALL` / `--security-opt=no-new-privileges` on the build container | Med | Container hardening — **done**: both flags set on fetch+build via `SecurityOpts` (see status update) |
