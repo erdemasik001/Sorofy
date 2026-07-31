@@ -120,27 +120,7 @@ impl Docker {
 
     /// Create a stopped container. `argv` is passed to the image's entrypoint.
     pub fn create(&self, spec: &ContainerSpec<'_>) -> Result<Container<'_>> {
-        let mut args: Vec<String> = vec!["create".into()];
-        if spec.network == Network::None {
-            args.push("--network=none".into());
-        }
-        if let Some(entrypoint) = spec.entrypoint {
-            args.push("--entrypoint".into());
-            args.push(entrypoint.into());
-        }
-        args.push("--workdir".into());
-        args.push(spec.workdir.into());
-        for (name, mount) in spec.volumes {
-            args.push("--volume".into());
-            args.push(format!("{name}:{mount}"));
-        }
-        for (k, v) in spec.env {
-            args.push("--env".into());
-            args.push(format!("{k}={v}"));
-        }
-        args.push(spec.image.into());
-        args.extend(spec.argv.iter().map(|s| s.to_string()));
-
+        let args = create_args(spec);
         let refs: Vec<&str> = args.iter().map(String::as_str).collect();
         let out = self.run(&refs)?;
         let id = String::from_utf8_lossy(&out).trim().to_string();
@@ -175,6 +155,21 @@ pub enum Network {
     None,
 }
 
+/// cgroup limits for a container. A `None` field imposes no limit.
+///
+/// Set on the build (and fetch) containers so a hostile `build.rs` cannot OOM
+/// the host, fork-bomb it, or peg every core. The wall-clock timeout bounds
+/// *time*, not *resources* — these bound the resources (docs/security.md, G1).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ResourceLimits<'a> {
+    /// `--memory`, e.g. `"3g"`.
+    pub memory: Option<&'a str>,
+    /// `--cpus`, e.g. `"2"`.
+    pub cpus: Option<&'a str>,
+    /// `--pids-limit`, e.g. `2048`.
+    pub pids: Option<u32>,
+}
+
 /// What to create a build container from.
 pub struct ContainerSpec<'a> {
     pub image: &'a str,
@@ -186,6 +181,51 @@ pub struct ContainerSpec<'a> {
     /// `(volume_name, mount_path)` pairs.
     pub volumes: &'a [(&'a str, &'a str)],
     pub network: Network,
+    /// cgroup caps for the container (memory/CPU/PIDs).
+    pub limits: ResourceLimits<'a>,
+}
+
+/// Build the `docker create ...` argument vector for a spec.
+///
+/// Split out from [`Docker::create`] so the flag construction — including the
+/// resource limits that keep an untrusted build from exhausting the host — can
+/// be unit-tested without a running daemon.
+fn create_args(spec: &ContainerSpec<'_>) -> Vec<String> {
+    let mut args: Vec<String> = vec!["create".into()];
+    if spec.network == Network::None {
+        args.push("--network=none".into());
+    }
+    // Resource caps first: a build compiles and runs untrusted code, so bound
+    // what one job can take from the host.
+    if let Some(memory) = spec.limits.memory {
+        args.push("--memory".into());
+        args.push(memory.into());
+    }
+    if let Some(cpus) = spec.limits.cpus {
+        args.push("--cpus".into());
+        args.push(cpus.into());
+    }
+    if let Some(pids) = spec.limits.pids {
+        args.push("--pids-limit".into());
+        args.push(pids.to_string());
+    }
+    if let Some(entrypoint) = spec.entrypoint {
+        args.push("--entrypoint".into());
+        args.push(entrypoint.into());
+    }
+    args.push("--workdir".into());
+    args.push(spec.workdir.into());
+    for (name, mount) in spec.volumes {
+        args.push("--volume".into());
+        args.push(format!("{name}:{mount}"));
+    }
+    for (k, v) in spec.env {
+        args.push("--env".into());
+        args.push(format!("{k}={v}"));
+    }
+    args.push(spec.image.into());
+    args.extend(spec.argv.iter().map(|s| s.to_string()));
+    args
 }
 
 /// A docker-managed volume, removed on drop.
@@ -329,5 +369,62 @@ impl Container<'_> {
 impl Drop for Container<'_> {
     fn drop(&mut self) {
         let _ = self.docker.run(&["rm", "--force", "--volumes", &self.id]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn create_args_carry_network_isolation_and_resource_caps() {
+        let argv = ["contract".to_string(), "build".to_string()];
+        let spec = ContainerSpec {
+            image: "img@sha256:abc",
+            entrypoint: None,
+            argv: &argv,
+            workdir: "/build/source",
+            env: &[("CARGO_HOME", "/cargo-home")],
+            volumes: &[("vol", "/cargo-home")],
+            network: Network::None,
+            limits: ResourceLimits {
+                memory: Some("3g"),
+                cpus: Some("2"),
+                pids: Some(2048),
+            },
+        };
+        let args = create_args(&spec);
+        let joined = args.join(" ");
+
+        assert_eq!(args.first().map(String::as_str), Some("create"));
+        assert!(joined.contains("--network=none"), "{joined}");
+        // The caps that keep an untrusted build from exhausting the host.
+        assert!(joined.contains("--memory 3g"), "{joined}");
+        assert!(joined.contains("--cpus 2"), "{joined}");
+        assert!(joined.contains("--pids-limit 2048"), "{joined}");
+        // Image and its argv come last, image before argv.
+        let img = args.iter().position(|s| s == "img@sha256:abc").unwrap();
+        let arg = args.iter().position(|s| s == "contract").unwrap();
+        assert!(img < arg, "image must precede argv");
+    }
+
+    #[test]
+    fn create_args_omit_unset_limits_and_default_network() {
+        let spec = ContainerSpec {
+            image: "img",
+            entrypoint: None,
+            argv: &[],
+            workdir: "/w",
+            env: &[],
+            volumes: &[],
+            network: Network::Bridge,
+            limits: ResourceLimits::default(),
+        };
+        let joined = create_args(&spec).join(" ");
+        assert!(!joined.contains("--memory"), "{joined}");
+        assert!(!joined.contains("--cpus"), "{joined}");
+        assert!(!joined.contains("--pids-limit"), "{joined}");
+        // Bridge is the daemon default, so no --network flag is emitted.
+        assert!(!joined.contains("--network"), "{joined}");
     }
 }

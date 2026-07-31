@@ -29,6 +29,19 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 /// Share of the job's budget the dependency fetch may use before we call it.
 const FETCH_TIMEOUT_FRACTION: u32 = 3;
 
+/// cgroup caps applied to the fetch and build containers (docs/security.md, G1).
+///
+/// A build compiles and runs untrusted code (`build.rs`, proc macros); without
+/// these a hostile source could OOM the host, fork-bomb it, or peg every core.
+/// Generous enough for a real-size contract build; a deploy target with less RAM
+/// gets the tighter of these and its own VM limit. Tune here if a legitimately
+/// large contract needs more headroom.
+const BUILD_LIMITS: crate::docker::ResourceLimits<'static> = crate::docker::ResourceLimits {
+    memory: Some("3g"),
+    cpus: Some("2"),
+    pids: Some(2048),
+};
+
 /// One reproduction job.
 #[derive(Debug, Clone)]
 pub struct ReproductionRequest {
@@ -156,6 +169,7 @@ pub fn reproduce(docker: &Docker, request: &ReproductionRequest) -> Result<Repro
         env: &[("CARGO_HOME", CARGO_HOME), ("CARGO_NET_OFFLINE", "true")],
         volumes: &[(cargo_home.name(), CARGO_HOME)],
         network: Network::None,
+        limits: BUILD_LIMITS,
     })?;
     tracing::info!(container = container.id(), image = %request.bldimg, "created build container");
 
@@ -250,6 +264,7 @@ fn fetch_dependencies(
         env: &[("CARGO_HOME", CARGO_HOME)],
         volumes: &[(cargo_home.name(), CARGO_HOME)],
         network: Network::Bridge,
+        limits: BUILD_LIMITS,
     })?;
     container.put_archive(STAGE_DIR, &source.tar)?;
 

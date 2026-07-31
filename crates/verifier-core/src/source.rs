@@ -2,9 +2,11 @@
 
 use std::collections::BTreeSet;
 use std::io::Read;
+use std::net::{IpAddr, ToSocketAddrs};
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};
+use url::Url;
 
 use crate::error::{Result, VerifyError};
 use crate::sha256_hex;
@@ -79,6 +81,14 @@ impl SourceRef {
 /// untracked files, no local state — so the tar is a function of the commit
 /// alone. `--prefix` gives us the single top-level directory SEP-58 wants.
 fn fetch_git(repo: &str, rev: &str) -> Result<SourceArchive> {
+    // Block SSRF for URL repos (docs/security.md, G4). Local paths and ssh
+    // remotes (used by the CLI and tests) carry no `http(s)://` scheme and are
+    // left alone — the service accepts https repos from strangers, a shell does
+    // not.
+    if repo.starts_with("http://") || repo.starts_with("https://") {
+        guard_public_url(repo)?;
+    }
+
     let tmp = std::env::temp_dir().join(format!("verify-src-{}", unique_token()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp)?;
@@ -123,6 +133,10 @@ fn fetch_git(repo: &str, rev: &str) -> Result<SourceArchive> {
 
 /// Download `uri`, check its digest, and normalise it to an uncompressed tar.
 fn fetch_archive(uri: &str, expected_sha256: &str) -> Result<SourceArchive> {
+    // Refuse to fetch from the host's own network before we make the request
+    // (docs/security.md, G4).
+    guard_public_url(uri)?;
+
     let resp = ureq::get(uri)
         .call()
         .map_err(|e| VerifyError::SourceFetch(format!("GET {uri} failed: {e}")))?;
@@ -160,6 +174,87 @@ fn fetch_archive(uri: &str, expected_sha256: &str) -> Result<SourceArchive> {
         top_dir,
         sha256: actual,
     })
+}
+
+/// Reject a submitter-supplied URL that points back at the host's own network
+/// (docs/security.md, G4 — SSRF).
+///
+/// A verifier fetches source from URLs strangers choose. Without this, a request
+/// could name `http://169.254.169.254/…` (cloud metadata), `http://localhost:…`,
+/// or an RFC-1918 address to probe or exfiltrate from inside the deploy network.
+/// We require `http`/`https`, resolve the host, and refuse if *any* resolved
+/// address is non-public.
+///
+/// Residual: this is a check-then-connect gap — DNS rebinding could return a
+/// public address here and an internal one when the fetch actually dials. Closing
+/// that needs IP-pinned dialing or an egress proxy; tracked in docs/security.md.
+fn guard_public_url(raw: &str) -> Result<()> {
+    let url = Url::parse(raw)
+        .map_err(|e| VerifyError::SourceFetch(format!("invalid source URL `{raw}`: {e}")))?;
+    match url.scheme() {
+        "http" | "https" => {}
+        other => {
+            return Err(VerifyError::SourceFetch(format!(
+                "source URL scheme `{other}` is not allowed; use https"
+            )))
+        }
+    }
+    let host = url
+        .host_str()
+        .ok_or_else(|| VerifyError::SourceFetch(format!("source URL `{raw}` has no host")))?;
+    let port = url.port_or_known_default().unwrap_or(443);
+
+    // Resolve and inspect every address the host maps to; a hostname that
+    // resolves to an internal address is refused just like a literal one.
+    let mut resolved = false;
+    for addr in (host, port).to_socket_addrs().map_err(|e| {
+        VerifyError::SourceFetch(format!("cannot resolve source host `{host}`: {e}"))
+    })? {
+        resolved = true;
+        if is_internal(addr.ip()) {
+            return Err(VerifyError::SourceFetch(format!(
+                "source host `{host}` resolves to a non-public address ({}); refusing (SSRF guard)",
+                addr.ip()
+            )));
+        }
+    }
+    if !resolved {
+        return Err(VerifyError::SourceFetch(format!(
+            "source host `{host}` did not resolve to any address"
+        )));
+    }
+    Ok(())
+}
+
+/// Whether `ip` is one a public fetch has no business reaching: loopback,
+/// link-local (incl. the `169.254.169.254` cloud-metadata endpoint), private,
+/// carrier-grade NAT, or unspecified. IPv6 ranges are matched on the raw
+/// segments to avoid depending on still-unstable `Ipv6Addr` helpers.
+fn is_internal(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_broadcast()
+                || v4.is_documentation()
+                || v4.is_unspecified()
+                || v4.octets()[0] == 0
+                // 100.64.0.0/10, carrier-grade NAT
+                || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xc0) == 0x40)
+        }
+        IpAddr::V6(v6) => {
+            if v6.is_loopback() || v6.is_unspecified() {
+                return true;
+            }
+            if let Some(mapped) = v6.to_ipv4_mapped() {
+                return is_internal(IpAddr::V4(mapped));
+            }
+            let head = v6.segments()[0];
+            // fc00::/7 unique-local, or fe80::/10 link-local.
+            (head & 0xfe00) == 0xfc00 || (head & 0xffc0) == 0xfe80
+        }
+    }
 }
 
 fn is_gzip(bytes: &[u8]) -> bool {
@@ -317,5 +412,61 @@ struct DirGuard(std::path::PathBuf);
 impl Drop for DirGuard {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    #[test]
+    fn internal_addresses_are_flagged() {
+        let internal = [
+            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),       // loopback
+            IpAddr::V4(Ipv4Addr::new(169, 254, 169, 254)), // cloud metadata (link-local)
+            IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3)),        // private
+            IpAddr::V4(Ipv4Addr::new(192, 168, 0, 5)),     // private
+            IpAddr::V4(Ipv4Addr::new(172, 16, 0, 1)),      // private
+            IpAddr::V4(Ipv4Addr::new(100, 64, 0, 1)),      // CGNAT
+            IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),         // unspecified
+            IpAddr::V6(Ipv6Addr::LOCALHOST),               // ::1
+            IpAddr::V6(Ipv6Addr::new(0xfc00, 0, 0, 0, 0, 0, 0, 1)), // unique-local
+            IpAddr::V6(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1)), // link-local
+            IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0xffff, 0x7f00, 0x0001)), // ::ffff:127.0.0.1
+        ];
+        for ip in internal {
+            assert!(is_internal(ip), "{ip} should be flagged internal");
+        }
+    }
+
+    #[test]
+    fn public_addresses_are_allowed() {
+        for ip in [
+            IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)),
+            IpAddr::V4(Ipv4Addr::new(140, 82, 121, 3)), // github.com range
+            IpAddr::V6(Ipv6Addr::new(0x2606, 0x4700, 0, 0, 0, 0, 0, 1)),
+        ] {
+            assert!(!is_internal(ip), "{ip} should be allowed");
+        }
+    }
+
+    #[test]
+    fn guard_rejects_internal_and_non_http_urls() {
+        // Literal internal addresses — parsed, not DNS-resolved, so offline.
+        for url in [
+            "http://127.0.0.1/x",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://10.0.0.5/repo.tar.gz",
+            "http://[::1]/x",
+            "https://localhost/x", // resolves via hosts file, still internal
+        ] {
+            assert!(guard_public_url(url).is_err(), "{url} must be refused");
+        }
+        // Non-http schemes are refused before any lookup.
+        assert!(guard_public_url("file:///etc/passwd").is_err());
+        assert!(guard_public_url("gopher://example.com/").is_err());
+        // Garbage is a fetch error, not a panic.
+        assert!(guard_public_url("not a url").is_err());
     }
 }
