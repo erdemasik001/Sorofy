@@ -10,8 +10,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Request, State};
 use axum::http::{HeaderMap, StatusCode};
+use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -234,6 +235,25 @@ pub fn router(state: AppState) -> Router {
         .route("/verify", post(start_verification))
         .route("/verify/{key}", get(get_verification))
         .with_state(state)
+        .layer(axum::middleware::from_fn(log_requests))
+}
+
+/// One structured log line per request: method, path, status, latency (roadmap
+/// 0.4). Never logs headers or bodies, so the bearer token is not captured. Health
+/// and metrics polls log at DEBUG so a load balancer cannot flood the INFO log.
+async fn log_requests(request: Request, next: Next) -> Response {
+    let method = request.method().clone();
+    let path = request.uri().path().to_owned();
+    let started = Instant::now();
+    let response = next.run(request).await;
+    let status = response.status().as_u16();
+    let latency_ms = started.elapsed().as_millis() as u64;
+    if path == "/health" || path == "/metrics" {
+        tracing::debug!(%method, path, status, latency_ms, "handled request");
+    } else {
+        tracing::info!(%method, path, status, latency_ms, "handled request");
+    }
+    response
 }
 
 /// Liveness + a cheap cache ping (roadmap 0.4). Public and unauthenticated so a

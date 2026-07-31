@@ -52,7 +52,7 @@ public exposure.
 - [x] **0.1 Security pass** — threat model ([`docs/security.md`](security.md), commit `595b2d0`)
 - [x] **0.2 Auth** — bearer token on `POST /verify`, `GET` public (commit `7504dac`)
 - [x] **0.3 Rate-limiting** — per-principal token-bucket rate limit + bounded admission queue on `POST /verify` (G3)
-- [ ] **0.4 Observability** — `/health`, structured logs, metrics (job count/duration/outcome)
+- [x] **0.4 Observability** — `GET /health` (liveness + db ping), `GET /metrics` (job counters), structured per-request logs
 - [ ] **0.5 Persistence hardening** — schema migrations + volume backup
 - [ ] **0.6 Integration test lane** — wire the `#[ignore]`d Docker/RPC tests into CI; make `extract_wasm` artifact-selection offline-testable
 - [ ] **0.7 Deploy to testnet host** — VPS + Docker-out-of-Docker, live URL; API image built `--locked` *(blocked by 0.2–0.5, 0.9, 0.10)*
