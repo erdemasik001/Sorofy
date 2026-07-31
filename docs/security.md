@@ -154,7 +154,7 @@ further layer. No known gap; revisit when multi-verifier (Phase 3) lands.
 | **G1** | No memory/CPU/PID/disk limits on the build container | High | Sandbox hardening (`3541656` + follow-up) — **done**: mem/CPU/PID/swap ✅; disk quota wired (`--storage-opt size=`), opt-in per storage driver (see status update) |
 | **G2** | No auth on `POST /verify` | High | Phase 0.2 |
 | **G3** | No rate limit / unbounded job queue | High | Phase 0.3 |
-| **G4** | SSRF via submitter-supplied source URI / repo | Med-High | Sandbox hardening (`3541656`) — **partially done**: host-fetch guard ✅, redirect-hop + in-container `cargo fetch` egress ✗ (see status update) |
+| **G4** | SSRF via submitter-supplied source URI / repo | Med-High | Sandbox hardening (`3541656` + follow-up) — **partially done**: host-fetch guard ✅, redirect-hop re-validation ✅ (G4-a); in-container `cargo fetch` egress ✗ (G4-b, see status update) |
 | **G5** | Socket mount = host root (tenancy) | Med | Accepted single-tenant; rootless/proxy tracked for post-M2 |
 | **G6** | No `--cap-drop=ALL` / `--security-opt=no-new-privileges` on the build container | Med | Container hardening — **done**: both flags set on fetch+build via `SecurityOpts` (see status update) |
 
@@ -207,15 +207,20 @@ submitted host is resolved and loopback/link-local/RFC-1918/CGNAT/IPv4-mapped ar
 refused, on both the git and archive paths. Documented residual: DNS-rebinding
 TOCTOU. **Undocumented residuals found in review:**
 
-- **Redirect bypass.** `guard_public_url` validates only the first host, but `ureq`
-  (2.12.1, default 5 redirects) and `git` (`http.followRedirects=initial`) follow
-  redirects — a public URL can `302 → 169.254.169.254`/RFC-1918 and reach an address
-  the guard never saw. Mostly *blind* (the archive body is gated by the
-  `source_sha256` check, so it is not reflected to the caller), but the request does
-  reach the internal endpoint. **The fix must re-validate every hop, not disable
-  redirects:** GitHub's `/archive/<sha>.tar.gz` legitimately `302`s to
-  `codeload.github.com`, and the retroactive path depends on that.
-- **In-container `cargo fetch` egress is unguarded.** `guard_public_url` covers only
+- **Redirect bypass — fixed (G4-a).** The archive path no longer lets ureq follow
+  redirects on its own: `get_with_guarded_redirects` (`source.rs`) disables auto-follow
+  (`redirects(0)`) and re-validates every `Location` through `guard_public_url` before
+  dialing it, up to `MAX_REDIRECTS` (5). The legitimate `github.com → codeload.github.com`
+  hop still works — live-verified by `reproduce_integration::verified_archive_source_uri`,
+  which follows that real `302` and reproduces the fixture WASM byte-for-byte. The git
+  path takes `-c http.followRedirects=false`: git's `initial` default would follow the
+  first request's redirect to an unvalidated host, and a smart-HTTP host serves the repo
+  on the validated host directly, so refusing cross-host git redirects closes the hop
+  without an egress proxy (the one legitimate redirect, codeload, is on the archive path,
+  which re-validates instead of refusing). Unit-tested: `resolve_redirect` handles
+  absolute/relative targets, and a `302 → 169.254.169.254` target is refused by the
+  per-hop guard.
+- **In-container `cargo fetch` egress is unguarded (G4-b, still open).** `guard_public_url` covers only
   the API host's own fetch. The fetch container runs `Network::Bridge`
   (`reproduce.rs`), and `cargo fetch` dials whatever git/registry hosts the
   attacker-controlled `Cargo.toml`/`Cargo.lock` name — internal addresses and the

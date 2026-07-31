@@ -66,6 +66,11 @@ pub struct SourceArchive {
 /// server's honesty about Content-Length.
 const MAX_ARCHIVE_BYTES: u64 = 256 * 1024 * 1024;
 
+/// Redirect hops to follow on the archive path before giving up. Matches ureq's
+/// historical default — ample for the one legitimate hop (github.com → codeload)
+/// with margin, and bounded so a redirect loop cannot spin.
+const MAX_REDIRECTS: u32 = 5;
+
 impl SourceRef {
     pub fn fetch(&self) -> Result<SourceArchive> {
         match self {
@@ -95,7 +100,21 @@ fn fetch_git(repo: &str, rev: &str) -> Result<SourceArchive> {
     let guard = DirGuard(tmp.clone());
 
     let clone = Command::new("git")
-        .args(["clone", "--quiet", "--no-checkout", repo])
+        .args([
+            // Do not follow a redirect to a host we never validated. We checked
+            // `repo`'s host, and a smart-HTTP git host serves the repo there
+            // directly, so a cross-host 3xx here would be an SSRF hop past the
+            // guard (docs/security.md, G4). git's default is `initial` (follow the
+            // first request's redirect), which is exactly that hole. The archive
+            // path re-validates each hop instead, because it has a legitimate
+            // github.com → codeload redirect; git clone has no such need.
+            "-c",
+            "http.followRedirects=false",
+            "clone",
+            "--quiet",
+            "--no-checkout",
+            repo,
+        ])
         .arg(&tmp)
         .output()
         .map_err(|e| VerifyError::SourceFetch(format!("could not run git: {e}")))?;
@@ -133,13 +152,9 @@ fn fetch_git(repo: &str, rev: &str) -> Result<SourceArchive> {
 
 /// Download `uri`, check its digest, and normalise it to an uncompressed tar.
 fn fetch_archive(uri: &str, expected_sha256: &str) -> Result<SourceArchive> {
-    // Refuse to fetch from the host's own network before we make the request
-    // (docs/security.md, G4).
-    guard_public_url(uri)?;
-
-    let resp = ureq::get(uri)
-        .call()
-        .map_err(|e| VerifyError::SourceFetch(format!("GET {uri} failed: {e}")))?;
+    // Follow redirects ourselves so every hop is SSRF-checked, not just the
+    // first URL (docs/security.md, G4).
+    let resp = get_with_guarded_redirects(uri)?;
 
     let mut bytes = Vec::new();
     resp.into_reader()
@@ -174,6 +189,55 @@ fn fetch_archive(uri: &str, expected_sha256: &str) -> Result<SourceArchive> {
         top_dir,
         sha256: actual,
     })
+}
+
+/// GET `url`, following redirects manually so **every** hop is SSRF-checked.
+///
+/// [`guard_public_url`] only ever saw the first URL, but ureq follows up to 5
+/// redirects on its own — so a public URL could `302` to `169.254.169.254` (or
+/// any RFC-1918 address) and reach it before we ever looked (docs/security.md,
+/// G4). We disable ureq's auto-follow and re-validate each `Location` before
+/// dialing it.
+///
+/// Redirects are re-validated, not disabled: GitHub's `/archive/<sha>.tar.gz`
+/// legitimately `302`s `github.com` → `codeload.github.com`, and the archive
+/// (`source_uri`) path depends on that hop.
+fn get_with_guarded_redirects(url: &str) -> Result<ureq::Response> {
+    let agent = ureq::builder().redirects(0).build();
+    let mut current = url.to_string();
+    for _ in 0..=MAX_REDIRECTS {
+        // Validate the host we are *about* to dial — the initial URL on the first
+        // pass, each redirect target on later passes.
+        guard_public_url(&current)?;
+        let resp = agent
+            .get(&current)
+            .call()
+            .map_err(|e| VerifyError::SourceFetch(format!("GET {current} failed: {e}")))?;
+        if !(300..400).contains(&resp.status()) {
+            return Ok(resp);
+        }
+        let location = resp.header("location").ok_or_else(|| {
+            VerifyError::SourceFetch(format!(
+                "redirect from `{current}` (status {}) had no Location header",
+                resp.status()
+            ))
+        })?;
+        current = resolve_redirect(&current, location)?;
+    }
+    Err(VerifyError::SourceFetch(format!(
+        "source URL redirected more than {MAX_REDIRECTS} times; refusing"
+    )))
+}
+
+/// Resolve a redirect `Location` — absolute or relative — against the URL that
+/// produced it, yielding the absolute URL of the next hop.
+fn resolve_redirect(current: &str, location: &str) -> Result<String> {
+    let base = Url::parse(current)
+        .map_err(|e| VerifyError::SourceFetch(format!("invalid redirect base `{current}`: {e}")))?;
+    let next = base.join(location).map_err(|e| {
+        VerifyError::SourceFetch(format!("invalid redirect target `{location}`: {e}"))
+    })?;
+    Ok(next.to_string())
 }
 
 /// Reject a submitter-supplied URL that points back at the host's own network
@@ -468,5 +532,38 @@ mod tests {
         assert!(guard_public_url("gopher://example.com/").is_err());
         // Garbage is a fetch error, not a panic.
         assert!(guard_public_url("not a url").is_err());
+    }
+
+    #[test]
+    fn resolve_redirect_handles_absolute_and_relative_targets() {
+        // Absolute Location replaces the whole URL (the github.com → codeload hop).
+        assert_eq!(
+            resolve_redirect(
+                "https://github.com/u/r/archive/abc.tar.gz",
+                "https://codeload.github.com/u/r/tar.gz/abc"
+            )
+            .unwrap(),
+            "https://codeload.github.com/u/r/tar.gz/abc"
+        );
+        // Relative Location resolves against the current URL's origin.
+        assert_eq!(
+            resolve_redirect("https://example.com/a/b", "/c/d").unwrap(),
+            "https://example.com/c/d"
+        );
+        // A garbage Location is a fetch error, not a panic.
+        assert!(resolve_redirect("https://example.com/", "http://[bad").is_err());
+    }
+
+    #[test]
+    fn a_redirect_target_to_an_internal_host_is_refused() {
+        // Per-hop safety is `guard_public_url` applied to the *resolved* target:
+        // a 302 → cloud metadata is caught before the next dial, even though the
+        // first host (github.com) was public.
+        let next =
+            resolve_redirect("https://github.com/u/r", "http://169.254.169.254/latest/").unwrap();
+        assert!(
+            guard_public_url(&next).is_err(),
+            "a redirect to the metadata endpoint must be refused"
+        );
     }
 }
