@@ -50,7 +50,7 @@ public exposure.
 ### Checklist (live status)
 
 - [x] **0.1 Security pass** — threat model ([`docs/security.md`](security.md), commit `595b2d0`)
-- [ ] **0.2 Auth** — bearer token on `POST /verify` (`GET` stays public)
+- [x] **0.2 Auth** — bearer token on `POST /verify`, `GET` public (commit `7504dac`)
 - [ ] **0.3 Rate-limiting** — quota per token/IP
 - [ ] **0.4 Observability** — `/health`, structured logs, metrics (job count/duration/outcome)
 - [ ] **0.5 Persistence hardening** — schema migrations + volume backup
