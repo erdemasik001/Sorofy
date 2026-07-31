@@ -164,10 +164,21 @@ pub enum Network {
 pub struct ResourceLimits<'a> {
     /// `--memory`, e.g. `"3g"`.
     pub memory: Option<&'a str>,
+    /// `--memory-swap`, e.g. `"3g"`. Set equal to `memory` to disable swap:
+    /// without it, a swap-enabled host lifts the effective memory ceiling to
+    /// ~2×. Only emitted alongside `memory` — docker requires `--memory` to be
+    /// set for `--memory-swap` to mean anything.
+    pub memory_swap: Option<&'a str>,
     /// `--cpus`, e.g. `"2"`.
     pub cpus: Option<&'a str>,
     /// `--pids-limit`, e.g. `2048`.
     pub pids: Option<u32>,
+    /// `--storage-opt size=`, e.g. `"10g"`: caps the container's writable layer
+    /// so a build cannot fill the host disk. Left unset by default because the
+    /// flag requires a quota-capable storage driver (overlay2 on xfs with
+    /// pquota, or btrfs/zfs/devicemapper); the daemon rejects it on a driver
+    /// without quota support. Enable per-deploy once the driver is known good.
+    pub storage_opt_size: Option<&'a str>,
 }
 
 /// What to create a build container from.
@@ -200,6 +211,12 @@ fn create_args(spec: &ContainerSpec<'_>) -> Vec<String> {
     if let Some(memory) = spec.limits.memory {
         args.push("--memory".into());
         args.push(memory.into());
+        // Nested under --memory: docker requires --memory for --memory-swap to
+        // have meaning, so a swap cap without a memory cap is never emitted.
+        if let Some(memory_swap) = spec.limits.memory_swap {
+            args.push("--memory-swap".into());
+            args.push(memory_swap.into());
+        }
     }
     if let Some(cpus) = spec.limits.cpus {
         args.push("--cpus".into());
@@ -208,6 +225,10 @@ fn create_args(spec: &ContainerSpec<'_>) -> Vec<String> {
     if let Some(pids) = spec.limits.pids {
         args.push("--pids-limit".into());
         args.push(pids.to_string());
+    }
+    if let Some(size) = spec.limits.storage_opt_size {
+        args.push("--storage-opt".into());
+        args.push(format!("size={size}"));
     }
     if let Some(entrypoint) = spec.entrypoint {
         args.push("--entrypoint".into());
@@ -389,8 +410,10 @@ mod tests {
             network: Network::None,
             limits: ResourceLimits {
                 memory: Some("3g"),
+                memory_swap: Some("3g"),
                 cpus: Some("2"),
                 pids: Some(2048),
+                storage_opt_size: Some("10g"),
             },
         };
         let args = create_args(&spec);
@@ -400,8 +423,12 @@ mod tests {
         assert!(joined.contains("--network=none"), "{joined}");
         // The caps that keep an untrusted build from exhausting the host.
         assert!(joined.contains("--memory 3g"), "{joined}");
+        // --memory-swap == --memory disables swap so the ceiling is not ~2×.
+        assert!(joined.contains("--memory-swap 3g"), "{joined}");
         assert!(joined.contains("--cpus 2"), "{joined}");
         assert!(joined.contains("--pids-limit 2048"), "{joined}");
+        // Disk quota on the writable layer, when a quota-capable driver allows it.
+        assert!(joined.contains("--storage-opt size=10g"), "{joined}");
         // Image and its argv come last, image before argv.
         let img = args.iter().position(|s| s == "img@sha256:abc").unwrap();
         let arg = args.iter().position(|s| s == "contract").unwrap();
@@ -424,7 +451,32 @@ mod tests {
         assert!(!joined.contains("--memory"), "{joined}");
         assert!(!joined.contains("--cpus"), "{joined}");
         assert!(!joined.contains("--pids-limit"), "{joined}");
+        // The opt-in caps must add no flags when their fields are unset.
+        assert!(!joined.contains("--memory-swap"), "{joined}");
+        assert!(!joined.contains("--storage-opt"), "{joined}");
         // Bridge is the daemon default, so no --network flag is emitted.
         assert!(!joined.contains("--network"), "{joined}");
+    }
+
+    #[test]
+    fn create_args_omit_memory_swap_without_memory() {
+        // --memory-swap needs --memory to mean anything, so it must not be
+        // emitted on its own even if the field is set.
+        let spec = ContainerSpec {
+            image: "img",
+            entrypoint: None,
+            argv: &[],
+            workdir: "/w",
+            env: &[],
+            volumes: &[],
+            network: Network::Bridge,
+            limits: ResourceLimits {
+                memory: None,
+                memory_swap: Some("3g"),
+                ..ResourceLimits::default()
+            },
+        };
+        let joined = create_args(&spec).join(" ");
+        assert!(!joined.contains("--memory-swap"), "{joined}");
     }
 }

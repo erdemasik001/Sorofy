@@ -38,8 +38,16 @@ const FETCH_TIMEOUT_FRACTION: u32 = 3;
 /// large contract needs more headroom.
 const BUILD_LIMITS: crate::docker::ResourceLimits<'static> = crate::docker::ResourceLimits {
     memory: Some("3g"),
+    // Equal to `memory` so swap cannot lift the effective ceiling to ~2× on a
+    // swap-enabled host.
+    memory_swap: Some("3g"),
     cpus: Some("2"),
     pids: Some(2048),
+    // No disk quota: `--storage-opt size=` needs a quota-capable storage driver
+    // (see `ResourceLimits::storage_opt_size`), which the deploy target is not
+    // guaranteed to have. Enable per-deploy once the driver is known to support
+    // it; a size-bounded volume/tmpfs is the driver-independent alternative.
+    storage_opt_size: None,
 };
 
 /// One reproduction job.

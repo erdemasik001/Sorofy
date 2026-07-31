@@ -133,6 +133,13 @@ rejected, the archive must have exactly one top-level directory, and the declare
 `source_sha256` is checked **before** anything is unpacked (SEP-58 step 3). These
 are unit-tested; the tests must stay.
 
+**Residual (retrospective review):** the traversal check inspects entry *paths* but
+not symlink *targets* — an entry whose link target is absolute (`/…`) or escapes the
+top dir (`../…`) is not rejected. Impact is low (the container is non-root and
+bind-mount-free, and modern `docker cp` extraction is symlink-safe), but such link
+targets should be rejected explicitly as defense-in-depth. Legitimate relative
+symlinks that stay inside the top dir must keep working.
+
 ### S6 — Verification integrity / cache poisoning *(handled; note)*
 
 The recorded result must reflect a real rebuild. Defended by: on-chain hash
@@ -144,11 +151,12 @@ further layer. No known gap; revisit when multi-verifier (Phase 3) lands.
 
 | ID | Gap | Severity | Addressed by |
 |---|---|---|---|
-| **G1** | No memory/CPU/PID/disk limits on the build container | High | Sandbox hardening (new task) |
+| **G1** | No memory/CPU/PID/disk limits on the build container | High | Sandbox hardening (`3541656` + follow-up) — **done**: mem/CPU/PID/swap ✅; disk quota wired (`--storage-opt size=`), opt-in per storage driver (see status update) |
 | **G2** | No auth on `POST /verify` | High | Phase 0.2 |
 | **G3** | No rate limit / unbounded job queue | High | Phase 0.3 |
-| **G4** | SSRF via submitter-supplied source URI / repo | Med-High | Sandbox hardening (new task) |
+| **G4** | SSRF via submitter-supplied source URI / repo | Med-High | Sandbox hardening (`3541656`) — **partially done**: host-fetch guard ✅, redirect-hop + in-container `cargo fetch` egress ✗ (see status update) |
 | **G5** | Socket mount = host root (tenancy) | Med | Accepted single-tenant; rootless/proxy tracked for post-M2 |
+| **G6** | No `--cap-drop=ALL` / `--security-opt=no-new-privileges` on the build container | Med | Container hardening (new; see status update) |
 
 ## Residual risk & decisions
 
@@ -166,3 +174,72 @@ further layer. No known gap; revisit when multi-verifier (Phase 3) lands.
 This pass **adds two hardening items** not in the original Phase 0 list —
 G1 (build resource limits) and G4 (SSRF egress control) — folded into a new
 "Sandbox hardening" task. Auth (G2) and rate-limiting (G3) proceed as planned.
+
+---
+
+## Status update — retrospective review (post-`3541656`)
+
+> Added after an independent security/Rust audit re-checked the "Sandbox hardening"
+> task (commit `3541656`, which claimed **G1** + **G4**). Both were delivered but
+> **partially**, and two hardening concerns were never in the original model. This
+> section is the authoritative current status; the tables above are the Phase 0.1
+> snapshot.
+
+### G1 — resource limits: closed
+Delivered and unit-tested (`reproduce.rs` `BUILD_LIMITS`, `docker.rs` `create_args`):
+`--memory 3g`, `--memory-swap 3g`, `--cpus 2`, `--pids-limit 2048` on both the fetch
+and build containers. Both residuals from the retrospective review are addressed:
+
+- **`--memory` without `--memory-swap`** — fixed. `BUILD_LIMITS` now sets
+  `--memory-swap` == `--memory` (`3g`), so swap can no longer lift the effective
+  memory ceiling to ~2× on a swap-enabled host.
+- **No disk quota** — the disk bound is wired: `ResourceLimits::storage_opt_size`
+  emits `--storage-opt size=` to cap the container's writable layer. It is left
+  unset in `BUILD_LIMITS` because the flag requires a quota-capable storage driver
+  (overlay2 on xfs with pquota, or btrfs/zfs/devicemapper), which the deploy target
+  is not guaranteed to have; enable it per-deploy once the driver is confirmed, or
+  use the driver-independent size-bounded volume/tmpfs. The code path and its tests
+  are in place, so activating the quota is a one-line deploy toggle, not new work.
+
+### G4 — SSRF egress control: partially closed
+Delivered and unit-tested (`source.rs` `guard_public_url`/`is_internal`): the
+submitted host is resolved and loopback/link-local/RFC-1918/CGNAT/IPv4-mapped are
+refused, on both the git and archive paths. Documented residual: DNS-rebinding
+TOCTOU. **Undocumented residuals found in review:**
+
+- **Redirect bypass.** `guard_public_url` validates only the first host, but `ureq`
+  (2.12.1, default 5 redirects) and `git` (`http.followRedirects=initial`) follow
+  redirects — a public URL can `302 → 169.254.169.254`/RFC-1918 and reach an address
+  the guard never saw. Mostly *blind* (the archive body is gated by the
+  `source_sha256` check, so it is not reflected to the caller), but the request does
+  reach the internal endpoint. **The fix must re-validate every hop, not disable
+  redirects:** GitHub's `/archive/<sha>.tar.gz` legitimately `302`s to
+  `codeload.github.com`, and the retroactive path depends on that.
+- **In-container `cargo fetch` egress is unguarded.** `guard_public_url` covers only
+  the API host's own fetch. The fetch container runs `Network::Bridge`
+  (`reproduce.rs`), and `cargo fetch` dials whatever git/registry hosts the
+  attacker-controlled `Cargo.toml`/`Cargo.lock` name — internal addresses and the
+  metadata endpoint included. No user code runs during fetch, so this is blind SSRF,
+  but it is a real egress vector G4 never modelled. Needs an egress-filtered network
+  or an allowlisting proxy for the fetch phase.
+
+### G6 — container hardening (new; not in the original model)
+The build/fetch containers run non-root (good) under the daemon's default seccomp
+profile (good — not disabled), but `create_args` sets **no `--cap-drop=ALL`** and
+**no `--security-opt=no-new-privileges`**. For a sandbox whose entire purpose is
+compiling untrusted code, dropping capabilities and blocking setuid privilege
+escalation is standard and cheap. Read-only rootfs (+ tmpfs for the writable paths)
+is a further follow-up. Severity: Medium — defense-in-depth; no known active escape.
+
+### Confirmed-good in the same review (not regressions — recorded so they are not re-touched)
+These were checked and are correct; do **not** "fix" them:
+
+- The build phase is genuinely `--network=none`; only `cargo fetch` has the network.
+- Digest-pin enforcement runs **before** any container is created (`reproduce.rs`),
+  and rejects a bare tag when `allow_unpinned_image` is off.
+- The image bakes `RUSTUP_TOOLCHAIN` (SEP-58 step 5), so a source `rust-toolchain.toml`
+  cannot switch the toolchain mid-build.
+- Containers and the per-job `CARGO_HOME` volume are force-removed on drop.
+- Every "proven" claim in the day-docs was re-verified live (on-chain hashes via RPC,
+  the GHCR digest via anonymous pull, fixture reachability, the retroactive tarball
+  sha256) and all held exactly.

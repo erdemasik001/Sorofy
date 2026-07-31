@@ -54,10 +54,11 @@ public exposure.
 - [ ] **0.3 Rate-limiting** — quota per token/IP
 - [ ] **0.4 Observability** — `/health`, structured logs, metrics (job count/duration/outcome)
 - [ ] **0.5 Persistence hardening** — schema migrations + volume backup
-- [ ] **0.6 Integration test lane** — wire the `#[ignore]`d Docker/RPC tests into CI
-- [ ] **0.7 Deploy to testnet host** — VPS + Docker-out-of-Docker, live URL *(blocked by 0.2–0.5, 0.9)*
+- [ ] **0.6 Integration test lane** — wire the `#[ignore]`d Docker/RPC tests into CI; make `extract_wasm` artifact-selection offline-testable
+- [ ] **0.7 Deploy to testnet host** — VPS + Docker-out-of-Docker, live URL; API image built `--locked` *(blocked by 0.2–0.5, 0.9, 0.10)*
 - [ ] **0.8 Narrative update** — README/pitch reflect "testnet productization"
 - [x] **0.9 Sandbox hardening** — build resource limits (G1) + SSRF guard (G4), surfaced by 0.1 (commit `3541656`)
+- [ ] **0.10 Sandbox hardening completion (retrospective)** — audit residuals in 0.9: G1 disk quota + `--memory-swap`, G4 per-hop redirect re-validation + in-container `cargo fetch` egress, new G6 `--cap-drop=ALL`/`--security-opt=no-new-privileges` (docs/security.md status update)
 
 **🚦 Phase 0 quality gate:** live testnet URL responds · unauthenticated `POST`
 returns 401 · security pass documented · integration lane green in CI · SLO
@@ -68,12 +69,13 @@ The table below is the rationale for each item.
 | Work | Why it's required | Builds on |
 |---|---|---|
 | **Security pass (do first)** — threat model for the untrusted-build sandbox + socket-mount model | The service compiles untrusted code and controls the host daemon; the risk surface must be understood before it faces the internet | `docker.rs` isolation, `reproduce.rs` two-phase split |
+| **Sandbox hardening completion (retrospective)** — close the audit residuals in the already-"done" task: G1 disk quota + `--memory-swap`; G4 per-hop redirect re-validation + in-container `cargo fetch` egress; new G6 `--cap-drop=ALL` / `--security-opt=no-new-privileges` | The sandbox-hardening task (`3541656`) under-delivered against its own threat model; these must close before public exposure | `security.md` status update; `docker.rs` `create_args`; `source.rs` guard |
 | **Auth** — bearer token on `POST /verify`; `GET` stays public | Exposing a socket-mounted service without auth risks the host | axum middleware over the router |
 | **Rate-limiting** — quota per token/IP | Builds are heavyweight; abuse is a DoS | build queue already caps concurrency at 2 |
-| **Deploy** — testnet host (VPS + Docker-out-of-Docker), live URL | The target itself | `docker/api/Dockerfile`, `fly.toml`, `.dockerignore` |
+| **Deploy** — testnet host (VPS + Docker-out-of-Docker), live URL; API image built `--locked` for a reproducible runtime | The target itself | `docker/api/Dockerfile`, `fly.toml`, `.dockerignore` |
 | **Observability** — `/health`, structured logs, basic metrics (job count/duration/outcome) | "Flawless" has to be measurable | `tracing` is already wired |
 | **Persistence hardening** — migration mechanism + volume backup | No data loss across deploy/restart | `db.rs` single table |
-| **Integration test lane** — wire the `#[ignore]`d Docker/RPC tests into a real CI lane | What we deploy must be proven, not assumed | 6 reproduction + 1 RPC ignored tests |
+| **Integration test lane** — wire the `#[ignore]`d Docker/RPC tests into a real CI lane; also refactor `extract_wasm` to select from tar bytes so its artifact-selection logic is unit-testable offline | What we deploy must be proven; the artifact selector currently has zero coverage | 6 reproduction + 1 RPC ignored tests |
 | **Sandbox hardening** — build resource limits (`--memory`/`--cpus`/`--pids-limit`) + SSRF egress guard | A hostile `build.rs` could OOM/fork-bomb the host; source fetch could reach internal addresses (docs/security.md G1, G4) | `docker.rs`, `source.rs` |
 | **Narrative update** — README/pitch-deck reflect "testnet productization" | Post-award status | docs |
 
@@ -133,6 +135,14 @@ disagreement.** The RFP calls a single hardcoded verifier "does not meet the bar
   `crates/attestation`).
 - Quorum/consensus plus an `agreement: 3/3` vs `disagreement` field in the API.
 - An attestation format that a third party can independently verify.
+- **Determinism prerequisite (review).** Before cross-verifier agreement is trusted,
+  the git and archive source paths must build under the same absolute path. Today git
+  stages at `/build/source` and archive at `/build/<repo>-<sha>`, and
+  `--remap-path-prefix` only covers `$CARGO_HOME/registry/src` (day1) — so if a source
+  path ever reaches the WASM, two honest verifiers fed the same source in different
+  shapes would disagree, manufacturing a false `disagreement`. Not observed on the two
+  contracts tested (both git and archive converged byte-for-byte); normalise the staged
+  top-dir to a constant first.
 
 **🚦 Quality gate:** ≥2 independent instances can be compared on the same
 contract; a deliberately-tampered instance is flagged as `disagreement`
