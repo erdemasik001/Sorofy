@@ -1,0 +1,55 @@
+# Continuous integration for the Sorofy workspace.
+#
+# Runs the same offline gate we run locally: formatting, lints, build, and the
+# unit/integration tests that do NOT need Docker or the network. The heavier
+# reproduction tests (crates/verifier-core/tests, crates/api/tests) are
+# `#[ignore]`d because they require a live Docker daemon, the pinned build
+# image, and testnet RPC — they stay a manual/local step, so CI never depends on
+# that infrastructure.
+#
+# The toolchain is pinned to 1.91.1 — the exact rustc the project standardized
+# on (docs/day0, docker/build-image). Pinning keeps CI reproducible and stops a
+# future stable release from breaking the build with new clippy lints.
+
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+# One in-flight run per ref; a new push cancels the previous run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: fmt · clippy · build · test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust 1.91.1 (rustfmt + clippy)
+        run: |
+          rustup toolchain install 1.91.1 --profile minimal --component rustfmt,clippy
+          rustup default 1.91.1
+          rustc --version
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (warnings are errors)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Build
+        run: cargo build --workspace --locked
+
+      - name: Test (offline; ignored Docker/RPC tests excluded)
+        run: cargo test --workspace
