@@ -1,0 +1,70 @@
+# Supply-chain lane: check the locked dependency tree against the RustSec
+# advisory database (roadmap "quality spine").
+#
+# Kept out of `ci.yml` because of the schedule below. The other two lanes answer
+# "did this change break something?"; this one answers "did the world change
+# under code that did not?" — an advisory published against a dependency we
+# already ship makes the tree vulnerable without a single commit. So it runs
+# weekly as well as on dependency changes, and a red run here is a signal to
+# update a dependency, not to fix the diff.
+#
+# The service compiles untrusted code and holds the host Docker socket
+# (docs/security.md, S1/S2), so a known-vulnerable dependency in the API process
+# is a host-level concern, not a hygiene nit.
+
+name: Audit
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+      - '.github/workflows/audit.yml'
+  pull_request:
+    paths:
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+      - '.github/workflows/audit.yml'
+  # Monday morning UTC, off the hour to avoid the scheduling stampede.
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: audit-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # Same pinned toolchain as ci.yml — cargo-audit only reads Cargo.lock, but
+      # a single toolchain across lanes keeps the cache shared and the setup
+      # identical.
+      - name: Install Rust 1.91.1
+        run: |
+          rustup toolchain install 1.91.1 --profile minimal
+          rustup default 1.91.1
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+
+      # Version-pinned so a cargo-audit release cannot change the verdict on an
+      # unchanged tree; bump deliberately. `--locked` builds the tool from its
+      # own lockfile.
+      - name: Install cargo-audit 0.22.2
+        run: cargo install cargo-audit --locked --version 0.22.2
+
+      # Fails on vulnerabilities. Informational advisories (unmaintained, yanked)
+      # are printed but do not fail the lane: they need a judgement call about a
+      # replacement dependency, and a blocking gate on them would turn a
+      # third-party maintainer going quiet into our broken CI. Read the output.
+      - name: Audit the locked dependency tree
+        run: cargo audit
