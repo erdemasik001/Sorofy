@@ -55,7 +55,12 @@ public exposure.
 - [x] **0.4 Observability** — `GET /health` (liveness + db ping), `GET /metrics` (job counters), structured per-request logs
 - [x] **0.5 Persistence hardening** — versioned schema migrations (`user_version`, forward-only, downgrade-refusing) + `VACUUM INTO` snapshots, optionally periodic via `SOROFY_BACKUP_DIR`
 - [x] **0.6 Integration test lane** — `integration.yml` runs the `#[ignore]`d Docker/RPC tests (push:master + manual); `extract_wasm` selection split into offline-testable `select_wasm_from_tar`
-- [ ] **0.7 Deploy to testnet host** — VPS + Docker-out-of-Docker, live URL; API image built `--locked` *(blocked by 0.2–0.5, 0.9, 0.10)*
+- [ ] **0.7 Deploy to testnet host** — VPS + Docker-out-of-Docker, live URL.
+  *Prepared:* a step-by-step [deploy playbook](deploy-playbook.md) (host baseline,
+  egress-filtered fetch network, TLS proxy, smoke tests, rollback); the API image
+  now builds `--locked`; the service shuts down gracefully and reconciles jobs
+  orphaned by a restart; the missing transport-security control is modelled (G7).
+  *Remaining:* a host. Everything still open here is execution, not design
 - [x] **0.8 Narrative update** — README + pitch deck reflect the post-award posture: what Phase 0 delivered, and an honest "not yet true" list (deploy, fetch egress, trust levels, single verifier)
 - [x] **0.9 Sandbox hardening** — build resource limits (G1) + SSRF guard (G4), surfaced by 0.1 (commit `3541656`)
 - [ ] **0.10 Sandbox hardening completion (retrospective)** — G1 disk quota + `--memory-swap` ✅, G6 `--cap-drop=ALL`/`no-new-privileges` ✅, G4-a per-hop redirect re-validation ✅, G4-b fetch-egress **code seam** ✅ (`VERIFY_FETCH_NETWORK`); remaining: G4-b host firewall rules + smoke test, which land with 0.7 ([ADR-0001](adr/0001-fetch-egress-control.md))
@@ -167,10 +172,14 @@ Out of scope for the current target; opens once M2's gate is green:
 
 - **Test pyramid:** unit → integration (Docker/RPC lane) → e2e → load (build
   queue) → security.
-- **Supply-chain:** `cargo audit` / `cargo deny` in CI.
+- **Supply-chain:** ✅ `cargo audit` over the locked tree — on dependency changes
+  *and* weekly, since an advisory can land against code that never changed
+  (`audit.yml`). Informational advisories (unmaintained/yanked) report without
+  failing the lane; `cargo deny`'s license/source policy is still open.
 - **CI/CD evolution:** current (fmt + clippy + test) → + integration lane →
-  + `cargo audit` → + deploy pipeline.
-- **Docs:** API reference, self-host guide, ops runbook.
+  + `cargo audit` ✅ → + deploy pipeline.
+- **Docs:** [deploy playbook](deploy-playbook.md) ✅; API reference, self-host
+  guide and ops runbook still open.
 
 Funded by the SCF Contract Source Verification Service RFP — testnet tranche (M2)
 is the current target; mainnet tranche (M3) is next.

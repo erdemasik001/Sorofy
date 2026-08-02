@@ -88,7 +88,8 @@ docker/
   api/             # runtime image for the sorofy-api service (Day3)
 docs/
   testnet-roadmap.md            # post-award roadmap: Phase 0-3, live status
-  security.md                   # threat model + gap register (G1-G6), audit status
+  security.md                   # threat model + gap register (G1-G7), audit status
+  deploy-playbook.md            # step-by-step testnet deploy: egress filter, TLS, smoke tests
   adr/                          # architecture decision records
   sep-58-notes.md               # SEP-58 field reference our verifier consumes
   day0-reproduction-findings.md # manual reproduction + determinism experiments
@@ -99,6 +100,7 @@ docs/
 .github/workflows/
   ci.yml             # offline gate: fmt · clippy · build · test (every push/PR)
   integration.yml    # the #[ignore]d Docker/RPC tests (master + on demand)
+  audit.yml          # cargo audit over the locked tree (dep changes + weekly)
 scripts/
   demo.ps1           # local demo runner (retroactive verify + tamper→mismatch)
 PLAN.md            # day-by-day MVP build plan (complete; superseded by the roadmap)
@@ -233,11 +235,14 @@ docker build --platform linux/amd64 \
 cargo test --workspace -- --ignored
 ```
 
-Two CI lanes: [`ci.yml`](.github/workflows/ci.yml) runs the offline gate
-(fmt · clippy · build · test) on every push and PR, and
+Three CI lanes: [`ci.yml`](.github/workflows/ci.yml) runs the offline gate
+(fmt · clippy · build · test) on every push and PR;
 [`integration.yml`](.github/workflows/integration.yml) runs the `#[ignore]`d
 Docker/RPC suite against the published image on merges to `master` and on demand —
-so the heavyweight, network-dependent tests are proven in CI without slowing PRs.
+so the heavyweight, network-dependent tests are proven in CI without slowing PRs;
+and [`audit.yml`](.github/workflows/audit.yml) checks the locked dependency tree
+against the RustSec advisory database on dependency changes *and* weekly, because
+an advisory can land against code that never changed.
 
 On the Linux deploy target this is native Docker; for local dev on Windows we run Docker
 Engine inside WSL2 (Ubuntu) rather than Docker Desktop. `verify-core` detects that and
@@ -269,12 +274,16 @@ internet. Live status: [docs/testnet-roadmap.md](docs/testnet-roadmap.md). Full 
 **Honest status — what is still not true:**
 
 - **No live public URL yet.** Deploy artifacts are ready ([`docker/api/Dockerfile`](docker/api/Dockerfile),
-  [`fly.toml`](fly.toml), `.dockerignore`) and the VPS path is one `docker run` away — see
-  [day3 "Deploy-readiness"](docs/day3-deploy-demo.md). This is the remaining Phase 0 item.
+  [`fly.toml`](fly.toml), `.dockerignore`) and the procedure is written down end to end in the
+  [deploy playbook](docs/deploy-playbook.md) — what is missing is a host, not a decision.
+  This is the remaining Phase 0 item.
 - **Fetch-phase egress is not yet filtered.** The dependency-fetch container can still reach
   internal addresses named by an attacker-controlled `Cargo.lock`. The code seam is in
   (`VERIFY_FETCH_NETWORK`); the host firewall rules that give it teeth land with the deploy —
   [ADR-0001](docs/adr/0001-fetch-egress-control.md) (G4-b).
+- **No TLS in front of the service.** The bearer token would travel in cleartext, so the
+  service must not be exposed until the playbook's reverse-proxy step is in place
+  ([security.md](docs/security.md) G7).
 - **`trust_level` hardcoded `arbitrary`** — the field is wired end-to-end; the allowlist that
   promotes it to `publicly-auditable` / `sdf-maintained` is Phase 1.
 - **Single verifier** — decentralization is architected for, not yet built.

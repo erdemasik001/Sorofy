@@ -155,6 +155,21 @@ resolution (S3), digest-pinned `bldimg` (a bare tag is rejected before any
 container), and deterministic rebuild. The trust-level allowlist (Phase 1) is a
 further layer. No known gap; revisit when multi-verifier (Phase 3) lands.
 
+### S7 — Cleartext transport *(must fix at deploy)*
+
+The service speaks plain HTTP: `axum::serve` over a TCP listener, no TLS in the
+process and nothing in the deploy artifacts terminating it. `POST /verify`
+authenticates with a bearer token (G2), so anyone who can observe the path
+between caller and service reads that token — and replays it. Cleartext
+transport does not weaken auth at the margin; it hands the credential over, and
+with it the ability to spend build capacity on a socket-mounted host (S2).
+
+This is deploy configuration, not a code gap: terminating TLS in-process would
+mean owning certificate renewal, which a reverse proxy does better. The fix is a
+TLS-terminating proxy in front, with the API published on loopback only so it
+cannot be reached around the proxy — both in the
+[deploy playbook](deploy-playbook.md).
+
 ## Prioritized gaps → Phase 0 requirements
 
 | ID | Gap | Severity | Addressed by |
@@ -165,6 +180,7 @@ further layer. No known gap; revisit when multi-verifier (Phase 3) lands.
 | **G4** | SSRF via submitter-supplied source URI / repo | Med-High | Sandbox hardening (`3541656` + follow-up) — **partially done**: host-fetch guard ✅, redirect-hop re-validation ✅ (G4-a); in-container `cargo fetch` egress ✗ (G4-b, see status update) |
 | **G5** | Socket mount = host root (tenancy) | Med | Accepted single-tenant; rootless/proxy tracked for post-M2 |
 | **G6** | No `--cap-drop=ALL` / `--security-opt=no-new-privileges` on the build container | Med | Container hardening — **done**: both flags set on fetch+build via `SecurityOpts` (see status update) |
+| **G7** | No TLS — the bearer token that gates `POST /verify` travels in cleartext | High | Deploy config: TLS-terminating reverse proxy + loopback-only publish (Phase 0.7, see status update) |
 
 ## Residual risk & decisions
 
@@ -264,6 +280,20 @@ unit-tested in `create_args`:
 Read-only rootfs (+ tmpfs for the writable paths) remains a further follow-up; it
 would slot into the same `SecurityOpts`. Severity was Medium — defense-in-depth;
 no known active escape either before or after.
+
+### G7 — transport security: open, closes with the deploy
+Surfaced by the Phase 0.7 deploy review, not by the sandbox audit: the model had
+covered *who* may call `POST /verify` (G2) and *how often* (G3) but never *how the
+credential reaches us*. Nothing in the code or the artifacts terminates TLS, so a
+naive `docker run -p 8080:8080` would publish an authenticated endpoint in
+cleartext — and, because Docker writes its own iptables rules, would do so past a
+`ufw` that appears to have the port closed.
+
+Both halves are deploy config and land with 0.7, specified in the
+[deploy playbook](deploy-playbook.md): a TLS-terminating reverse proxy in front,
+and `-p 127.0.0.1:8080:8080` so the API is reachable only through it. Flip this to
+closed when the live URL serves HTTPS and a plain-HTTP request to the host is
+refused.
 
 ### Confirmed-good in the same review (not regressions — recorded so they are not re-touched)
 These were checked and are correct; do **not** "fix" them:
