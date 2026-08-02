@@ -21,7 +21,10 @@ WORKDIR /src
 # already present in the rust image.
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
-RUN cargo build --release -p api --bin sorofy-api
+# --locked: build exactly the dependency versions in Cargo.lock. Without it cargo
+# is free to update the lockfile mid-build, so the image would not match the
+# tree that was tested, reviewed, and `cargo audit`ed (roadmap 0.7).
+RUN cargo build --release --locked -p api --bin sorofy-api
 
 # ---- runtime stage -------------------------------------------------------
 FROM debian:bookworm-slim

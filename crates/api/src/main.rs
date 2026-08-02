@@ -44,6 +44,14 @@ async fn main() -> anyhow::Result<()> {
 
     let db = Db::open(std::path::Path::new(&db_path))?;
     tracing::info!(schema_version = db.schema_version()?, "cache schema ready");
+    // Anything still `pending` was being built by a process that is gone (a
+    // restart, a crash, an OOM kill); nothing will ever finish those rows, so
+    // reconcile them before serving rather than reporting `pending` forever.
+    // Must happen before the listener opens, so no caller can observe the lie.
+    match db.fail_orphaned_pending(ORPHANED_JOB_ERROR)? {
+        0 => {}
+        count => tracing::warn!(count, "failed jobs orphaned by a previous run"),
+    }
     if let Ok(dir) = std::env::var("SOROFY_BACKUP_DIR") {
         spawn_periodic_backup(db.clone(), std::path::PathBuf::from(dir));
     }
@@ -52,8 +60,62 @@ async fn main() -> anyhow::Result<()> {
     let auth_enabled = state.api_token.is_some();
     tracing::info!(%bind, db = %db_path, rpc = %rpc_url, allow_unpinned, auth = auth_enabled, "sorofy-api listening");
     let listener = tokio::net::TcpListener::bind(&bind).await?;
-    axum::serve(listener, router(state)).await?;
+    axum::serve(listener, router(state))
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+    tracing::info!("shutdown complete");
     Ok(())
+}
+
+/// Reason recorded on jobs a previous process left mid-flight.
+///
+/// Phrased for the API consumer, who sees it in the `error` field of a `GET`:
+/// the job did not fail on its merits, and resubmitting is the fix.
+const ORPHANED_JOB_ERROR: &str =
+    "verification was interrupted by a service restart and did not complete; resubmit to retry";
+
+/// Resolve when the platform asks us to stop: SIGTERM (what `docker stop` and
+/// systemd send) or Ctrl-C.
+///
+/// Without this, a redeploy severs in-flight HTTP requests mid-response — a
+/// caller's `POST` can be cut off *after* the pending row was written, so it
+/// never learns the job id. Graceful shutdown stops accepting new connections and
+/// lets in-flight requests finish first.
+///
+/// It deliberately does **not** wait for running builds: those are detached tasks
+/// that take minutes, far past any orchestrator's kill timeout, so waiting would
+/// just turn a clean stop into a SIGKILL. Their rows are reconciled on the next
+/// startup instead (`fail_orphaned_pending`), which also covers the crash and
+/// OOM-kill cases that no shutdown hook can.
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            tracing::error!(error = %e, "could not listen for Ctrl-C");
+            // Never resolve: a broken handler must not look like a stop request.
+            std::future::pending::<()>().await;
+        }
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut sig) => {
+                sig.recv().await;
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "could not listen for SIGTERM");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+    // Windows has no SIGTERM; local dev stops with Ctrl-C.
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => tracing::info!("received Ctrl-C; draining in-flight requests"),
+        _ = terminate => tracing::info!("received SIGTERM; draining in-flight requests"),
+    }
 }
 
 /// Snapshot the cache into `dir` on an interval (roadmap 0.5).

@@ -214,6 +214,33 @@ impl Db {
         Ok(())
     }
 
+    /// Fail every job still marked `pending`, returning how many rows changed.
+    ///
+    /// Jobs live in the process, not the database: `POST /verify` records a
+    /// pending row and spawns a task. So a row still `pending` when the service
+    /// starts belongs to a process that no longer exists — its build container
+    /// died with it, and nothing will ever finish the row. Left alone, `GET`
+    /// reports `pending` forever for work that is not running, which is a lie the
+    /// cache tells about its own state; the deploy model makes this routine
+    /// rather than exotic, since every redeploy is a restart.
+    ///
+    /// Sound because the deploy model is a single node with a single writer
+    /// (docs/security.md, S2): at startup this process owns no jobs, so every
+    /// pending row is by definition an orphan. A second concurrent instance
+    /// against the same file would break that assumption and fail live jobs —
+    /// which is why this runs once at startup, not on a timer.
+    pub fn fail_orphaned_pending(&self, error: &str) -> anyhow::Result<usize> {
+        self.conn()
+            .execute(
+                "UPDATE verifications
+                 SET status = 'error', error = ?1,
+                     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+                 WHERE status = 'pending'",
+                params![error],
+            )
+            .context("reconciling orphaned pending jobs")
+    }
+
     /// Fetch one row by id.
     pub fn get(&self, id: i64) -> anyhow::Result<Option<VerificationRow>> {
         self.conn()
@@ -360,6 +387,35 @@ mod tests {
         assert_eq!(db.lookup("CID1").unwrap().expect("found").id, second);
         assert_eq!(db.lookup("AA11").unwrap().expect("found").id, second);
         assert!(db.lookup("unknown").unwrap().is_none());
+    }
+
+    #[test]
+    fn orphaned_pending_jobs_are_failed_and_finished_ones_untouched() {
+        let db = Db::open_in_memory().unwrap();
+        let orphan = db
+            .insert_pending(Some("CORP"), "aa01", &source(), "img")
+            .unwrap();
+        let done = db
+            .insert_pending(Some("CDON"), "aa02", &source(), "img")
+            .unwrap();
+        db.complete(
+            done,
+            JobStatus::Verified,
+            &serde_json::json!({"result": "verified"}),
+        )
+        .unwrap();
+
+        assert_eq!(db.fail_orphaned_pending("restarted").unwrap(), 1);
+
+        let row = db.get(orphan).unwrap().expect("orphan row");
+        assert_eq!(row.status, JobStatus::Error);
+        assert_eq!(row.error.as_deref(), Some("restarted"));
+        // A job that already reached a terminal state keeps its outcome.
+        let row = db.get(done).unwrap().expect("finished row");
+        assert_eq!(row.status, JobStatus::Verified);
+
+        // Idempotent: a second startup finds nothing left to reconcile.
+        assert_eq!(db.fail_orphaned_pending("restarted").unwrap(), 0);
     }
 
     /// A throwaway directory for the on-disk tests; removed on drop.
