@@ -19,8 +19,59 @@ The target has two layers:
 
 1. **"Deployable to testnet" (immediate)** → **Phase 0**. A live, authenticated,
    observable service. This alone meets the literal near-term goal.
-2. **"Testnet milestone complete (M2)"** → **Phases 1–3**, built on top of the
-   live service.
+2. **"Testnet milestone complete (M2)"** → **Phases 1–3**. Built *for* the live
+   service; not necessarily *after* it — see the phase-transition rule below.
+
+## Funded scope — the Instawards SOW *(read this before picking work)*
+
+The money behind the current work is a **30-day Instawards engagement**, not the
+SCF M2 milestone this document is otherwise organised around. The SOW was
+submitted 2026-07-18 with a suggested sprint start of **2026-07-19**, so the
+window closes around **2026-08-17** unless the chapter lead started the clock
+elsewhere — worth confirming, because it is roughly half spent.
+
+It funds exactly three deliverables, and its out-of-scope list is explicit:
+
+| SOW deliverable | Status | What is missing |
+|---|---|---|
+| **1. Deterministic build engine** (`verify-core` CLI, digest-pinned image, sha256 vs on-chain) | ✅ Built | Evidence only: a screenshot of a CLI run showing `verified` and a `mismatch` on altered source |
+| **2. Public REST API, **live on testnet**, cached, `trust_level` in the schema | ⚠️ **Half** — the API is built and tested; it is **not deployed** | The live URL (roadmap 0.7), 2–3 real contracts verified through it, and a screenshot of a `GET` returning JSON |
+| **3. Retroactive path** (source + vetted `bldimg` out-of-band, ≥1 real pre-SEP-58 contract) | ✅ Proven (day3) | Evidence only: a demo recording plus the contract id |
+
+**Explicitly out of SOW scope:** multi-verifier/decentralisation ("architected and
+documented as the next milestone"), mainnet + audit, explorer/wallet UI, an
+on-chain registry contract, and guaranteed determinism across all contracts.
+
+**Consequence for this roadmap.** Phases 1–3 below are *next-milestone* work, not
+funded deliverables — Phase 3 is on the SOW's out-of-scope list by name, and
+Phase 2 goes far past deliverable 3, which needs one contract verified, not a
+registry with a submission and moderation flow. The only funded item still open
+is **0.7 (deploy) plus the three evidence artifacts**. Everything else in this
+document is post-SOW.
+
+### Delivery plan
+
+Two of the three deliverables are already built; what remains is the deploy and
+the evidence that makes the work reviewable. The evidence is a deliverable in its
+own right, not paperwork: the SOW is signed off by the Ambassador Chapter Lead
+and says the proof must be reviewable "with minimal technical expertise", so a
+live URL and a recording carry more weight at sign-off than any amount of code.
+
+| Block | Work | Needs a host? |
+|---|---|---|
+| **A — Evidence that needs nothing** | A1 screenshot of a `verify-core` run showing `verified` and, on altered source, `mismatch` (deliverable 1, complete after this) · A2 parameterise [`scripts/demo.ps1`](../scripts/demo.ps1), whose API URL is currently hardcoded to localhost, so the recording can run against the live service · A3 a one-page delivery note aimed at a non-technical reviewer | No |
+| **B — Deploy** | The [playbook](deploy-playbook.md) end to end: host baseline → fetch network + egress rules → image → run → TLS → the 11 smoke tests. Smoke tests 8–9 (fixture `verified`, tampered → `mismatch`) *are* the deliverable-2 evidence, not extra work | Yes |
+| **C — Evidence on the live service** | C1 screenshot of `GET /verify/{id}` returning JSON with `status` and `trust_level` · C2 verify 2–3 real testnet contracts through the live API · C3 record the demo (retroactive verify, then tamper → `mismatch`) | Yes |
+| **D — Close the paperwork** | Playbook step 7: live URL into the README, G4-b + G7 closed, ADR action items 2–4 ticked, 0.7 done | Yes |
+
+**Contract inventory for C2:** two are ready — `CAZAVVTM…` (the ~40 KB real-size
+token) and the hello-world fixture (660 B). The SOW asks for 2–3, so a third is
+optional; it would mean deploying another `soroban-examples` contract to testnet.
+
+**Estimate:** ~1.5–2 working days total, of which block A (~half a day) can be
+done before a host exists. The playbook has never been executed, so budget first-run
+friction; and point the domain's DNS at the host early, since the TLS step cannot
+issue a certificate before it resolves.
 
 ## Definition of "flawless" (the bar every phase is held to)
 
@@ -38,9 +89,47 @@ A phase is *done* only when it meets all of:
 **Phase-transition rule:** the next phase does not start until the current
 phase's quality gate is green.
 
+> **Recorded exception (2026-08-03) — Phase 1 may start while 0.7 waits.**
+> The rule exists so features are not piled onto an unhardened service. It was
+> never meant to block on a *purchase*: Phase 0's only open item is the deploy
+> itself, which needs a host. The hardening the rule actually cares about — auth,
+> rate limiting, sandbox limits, egress seam, observability, persistence — is done
+> and tested.
+>
+> **Superseded in priority the same day** by the SOW review above: Phases 1–3 are
+> not funded deliverables, and the deploy they were going to run ahead of *is*
+> one. The exception stands for when the SOW is delivered; until then it is not a
+> licence to start Phase 1 instead of deploying.
+>
+> What still holds, and is not negotiable: **nothing is exposed publicly until
+> the Phase 0 gate is green.** G4-b (fetch egress) and G7 (TLS) are open, so a
+> live URL before the playbook runs would be exposing a service we have already
+> written down as unsafe to expose. Phase 1 work lands in the repo, not on the
+> internet.
+>
+> Phases 2 and 3 inherit this exception; 0.7 stays the gate for *going live*, not
+> for *building*.
+
+**Scope discipline (2026-08-03).** Phase 0 grew from 8 items to 10 plus
+sub-items, each addition individually justified by a real finding. That pattern
+does not stop on its own, so the residual hygiene items below are explicitly
+**deferred until after M2's phases**, not carried as ambient work:
+
+| Deferred residual | Why it can wait |
+|---|---|
+| Symlink target validation (S5) | Recorded residual, low impact: the container is non-root and bind-mount-free, and modern `docker cp` extraction is symlink-safe |
+| `cargo deny` license/source policy | `cargo audit` already covers advisories, which is the security half |
+| Read-only rootfs for build containers (G6 follow-up) | Defense-in-depth on an already capability-dropped, non-root, network-less build |
+| Build-queue load test | Admission bound and rate limit are unit-tested; real load needs the live host anyway |
+| API reference / self-host guide / ops runbook | The playbook covers the operator path; the rest is polish before M3 |
+
+None of these is a correctness or exposure risk on their own, and none is an M2
+deliverable. Revisit as a batch once Phase 3's gate is green — or sooner if one
+turns out to block a phase.
+
 ---
 
-## Phase 0 — Deployable to testnet *(immediate block)*
+## Phase 0 — Deployable to testnet *(one item open: the deploy itself)*
 
 **Goal:** the current MVP becomes a securely deployed, authenticated, observable
 live testnet service. Deploy artifacts already exist ([`docker/api/Dockerfile`](../docker/api/Dockerfile),
@@ -85,7 +174,9 @@ The table below is the rationale for each item.
 | **Narrative update** — README/pitch-deck reflect "testnet productization" | Post-award status | docs |
 
 > Passing the Phase 0 gate above **meets the near-term goal**: the product is
-> live and secure on testnet. Phases 1–3 complete M2 on top of it.
+> live and secure on testnet. Phases 1–3 complete M2. They are being built in
+> parallel with the deploy under the recorded exception above; the gate still
+> governs when any of it faces the internet.
 
 **Primary risk:** mounting the host Docker socket grants the container control of
 the host daemon. Mitigation: auth + single-tenant isolation now; evaluate
@@ -93,10 +184,16 @@ rootless/DinD later.
 
 ---
 
-## Phase 1 — Real trust model
+## Phase 1 — Real trust model *(queued: post-SOW)*
 
 **Goal:** promote `trust_level` from the hardcoded `arbitrary` to real,
 allowlist-backed tiers.
+
+Not a funded deliverable — the SOW asks only that `trust_level` be *in the
+response schema*, which it is. This is the cheapest of the three M2 phases (the
+`TrustLevel` enum and the schema are already wired end to end, so only the lookup
+and its policy are missing) and it needs no host, which makes it the natural
+first item once the SOW's deploy and evidence are done.
 
 - Vetted-image allowlist (config/DB): digest → `publicly-auditable` /
   `sdf-maintained`.
@@ -123,8 +220,12 @@ path is already proven; the registry/service layer is what's missing.
 - **Abuse resistance:** who may submit, spam / malicious-source protection,
   moderation.
 - **Query API:** return the recorded source for a pre-SEP-58 contract.
-- **Proof target:** find the source of Day0's `CDZZZTN6…` (the one real target
-  whose source is still unknown) and verify it through the registry.
+- **Proof target (stretch, not the gate):** find the source of Day0's
+  `CDZZZTN6…` (the one real target whose source is still unknown) and verify it
+  through the registry. This is open-ended research — the source may simply not
+  be public — so it must not be on the critical path. The gate below is met by
+  any metadata-less contract with a third-party-supplied source; the day3
+  retroactive path already proves that shape.
 
 **🚦 Quality gate:** a metadata-less contract returns `verified` from a
 third-party-supplied source; spam/malicious submissions are rejected (tested).

@@ -289,7 +289,7 @@ internet. Live status: [docs/testnet-roadmap.md](docs/testnet-roadmap.md). Full 
 - **Single verifier** — decentralization is architected for, not yet built.
 
 **M2 — Testnet milestone · trust model, retroactive registry, decentralization**
-*(+4–6 weeks; [Phases 1–3](docs/testnet-roadmap.md), built on the live service)*
+*(next milestone, after the current funded engagement; [Phases 1–3](docs/testnet-roadmap.md))*
 
 - **Trust-level allowlist** (Phase 1): promote `trust_level` beyond `arbitrary` from a vetted
   image list — the `TrustLevel` enum and response schema are already wired end-to-end.
