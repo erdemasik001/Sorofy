@@ -67,6 +67,12 @@ pub struct VerificationRow {
     pub updated_at: String,
 }
 
+/// Hard ceiling on rows one [`Db::recent`] call may return.
+///
+/// Generous for an explorer page, small enough that no single request can pull
+/// the whole table into memory however the caller asks.
+pub const MAX_PAGE: u32 = 200;
+
 /// Handle to the cache. Cheap to clone; one connection behind a mutex.
 ///
 /// SQLite serializes writers anyway, and every operation here is a point
@@ -272,6 +278,42 @@ impl Db {
             .optional()
             .context("looking up verification by contract id / wasm hash")
     }
+
+    /// Newest-first page of verifications, for the explorer's landing view.
+    ///
+    /// Ordered by `id` rather than `created_at`: the timestamp has one-second
+    /// resolution, so two jobs submitted in the same second would come back in an
+    /// arbitrary order and could repeat or vanish across pages. The primary key
+    /// is monotonic and unique, which makes paging stable.
+    ///
+    /// `limit` is clamped to [`MAX_PAGE`] here rather than in the caller. The
+    /// table grows without bound and this backs a public, unauthenticated read,
+    /// so the ceiling belongs where it cannot be forgotten — a handler may still
+    /// apply a smaller default, but it cannot lift this one.
+    pub fn recent(&self, limit: u32, offset: u32) -> anyhow::Result<Vec<VerificationRow>> {
+        let limit = limit.min(MAX_PAGE);
+        let conn = self.conn();
+        let mut stmt = conn
+            .prepare(&format!(
+                "SELECT {COLUMNS} FROM verifications
+                 ORDER BY id DESC LIMIT ?1 OFFSET ?2"
+            ))
+            .context("preparing recent verifications query")?;
+        let rows = stmt
+            .query_map(params![limit, offset], row_from_sql)
+            .context("listing recent verifications")?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("reading recent verifications")?;
+        Ok(rows)
+    }
+
+    /// Total verifications on record, so a client can page without walking off
+    /// the end.
+    pub fn count(&self) -> anyhow::Result<i64> {
+        self.conn()
+            .query_row("SELECT COUNT(*) FROM verifications", [], |row| row.get(0))
+            .context("counting verifications")
+    }
 }
 
 /// Apply any migrations this database has not seen yet.
@@ -416,6 +458,43 @@ mod tests {
 
         // Idempotent: a second startup finds nothing left to reconcile.
         assert_eq!(db.fail_orphaned_pending("restarted").unwrap(), 0);
+    }
+
+    #[test]
+    fn recent_pages_newest_first_and_counts() {
+        let db = Db::open_in_memory().unwrap();
+        let mut ids = Vec::new();
+        for n in 0..5 {
+            ids.push(
+                db.insert_pending(Some(&format!("C{n}")), &format!("aa0{n}"), &source(), "img")
+                    .unwrap(),
+            );
+        }
+        assert_eq!(db.count().unwrap(), 5);
+
+        // Newest first, and the page boundary neither repeats nor skips a row —
+        // the reason ordering is by id and not by the one-second `created_at`.
+        let page1: Vec<i64> = db.recent(2, 0).unwrap().iter().map(|r| r.id).collect();
+        let page2: Vec<i64> = db.recent(2, 2).unwrap().iter().map(|r| r.id).collect();
+        assert_eq!(page1, [ids[4], ids[3]]);
+        assert_eq!(page2, [ids[2], ids[1]]);
+
+        // Past the end is empty, not an error.
+        assert!(db.recent(10, 99).unwrap().is_empty());
+    }
+
+    #[test]
+    fn recent_caps_the_page_however_much_is_asked_for() {
+        let db = Db::open_in_memory().unwrap();
+        for n in 0..=MAX_PAGE {
+            db.insert_pending(None, &format!("{n:04x}"), &source(), "img")
+                .unwrap();
+        }
+        assert_eq!(db.count().unwrap(), i64::from(MAX_PAGE) + 1);
+
+        // The ceiling lives in the query, not in a caller's discipline: asking
+        // for everything still yields one page.
+        assert_eq!(db.recent(u32::MAX, 0).unwrap().len(), MAX_PAGE as usize);
     }
 
     /// A throwaway directory for the on-disk tests; removed on drop.
