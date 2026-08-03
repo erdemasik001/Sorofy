@@ -140,14 +140,16 @@ disagreement.** The RFP calls a single hardcoded verifier "does not meet the bar
   `crates/attestation`).
 - Quorum/consensus plus an `agreement: 3/3` vs `disagreement` field in the API.
 - An attestation format that a third party can independently verify.
-- **Determinism prerequisite (review).** Before cross-verifier agreement is trusted,
-  the git and archive source paths must build under the same absolute path. Today git
-  stages at `/build/source` and archive at `/build/<repo>-<sha>`, and
-  `--remap-path-prefix` only covers `$CARGO_HOME/registry/src` (day1) — so if a source
-  path ever reaches the WASM, two honest verifiers fed the same source in different
-  shapes would disagree, manufacturing a false `disagreement`. Not observed on the two
-  contracts tested (both git and archive converged byte-for-byte); normalise the staged
-  top-dir to a constant first.
+- ✅ **Determinism prerequisite (done).** Cross-verifier agreement is only
+  meaningful if the git and archive paths build under the same absolute path. They
+  did not: git staged at `/build/source`, an archive at `/build/<repo>-<sha>`, and
+  `--remap-path-prefix` only covers `$CARGO_HOME/registry/src` (day1) — so if a
+  source path ever reached the WASM, two honest verifiers fed the same commit in
+  different shapes would have manufactured a false `disagreement`. Every staged
+  tree is now re-rooted onto a constant (`STAGED_TOP_DIR`, `source.rs`), so the
+  workdir is `/build/source` for both, and the staged tar is byte-identical
+  whichever shape was fetched — unit-tested, and live-verified by the archive path
+  still reproducing the fixture's on-chain hash byte-for-byte.
 
 **🚦 Quality gate:** ≥2 independent instances can be compared on the same
 contract; a deliberately-tampered instance is flagged as `disagreement`

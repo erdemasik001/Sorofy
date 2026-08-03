@@ -172,7 +172,10 @@ pub fn reproduce(docker: &Docker, request: &ReproductionRequest) -> Result<Repro
 
     tracing::info!(source = ?request.source, "fetching source");
     let source = request.source.fetch()?;
-    let workdir = format!("{STAGE_DIR}/{}", source.top_dir);
+    // A constant, not a property of the fetched source: `normalize_for_staging`
+    // re-roots every tree onto STAGED_TOP_DIR so the git and archive paths build
+    // at the same absolute path (see that constant — Phase 3 prerequisite).
+    let workdir = format!("{STAGE_DIR}/{}", crate::source::STAGED_TOP_DIR);
 
     // A contract's dependencies live on crates.io, but the build must not have
     // network access — so the job is split in two, sharing one CARGO_HOME:

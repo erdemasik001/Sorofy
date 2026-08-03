@@ -32,6 +32,23 @@ pub enum SourceRef {
 /// `target/` directory into the tree.
 pub const BUILDER_UID: u64 = 1000;
 
+/// The top-level directory every staged source tree is rewritten to.
+///
+/// Both source shapes must build at the *same* absolute path inside the
+/// container. They did not: `git archive --prefix=source/` staged at
+/// `/build/source`, while an archive kept whatever top directory its author
+/// chose (GitHub's tarballs use `<repo>-<sha>`), staging at `/build/<repo>-<sha>`.
+///
+/// That difference is a correctness problem for multi-verifier agreement
+/// (roadmap Phase 3), not a tidiness one. `--remap-path-prefix` only covers
+/// `$CARGO_HOME/registry/src`, so nothing normalises the *workdir* path. If a
+/// build ever embeds its absolute path — a `build.rs` writing `env!("PWD")`, a
+/// panic message, a debug section — then two honest verifiers handed the same
+/// commit in different shapes (one as a repo, one as a tarball) would produce
+/// different bytes and report `disagreement` about an honest contract. Staging
+/// both at a constant removes the variable.
+pub const STAGED_TOP_DIR: &str = "source";
+
 /// A token unique within this process, for naming scratch dirs and volumes.
 ///
 /// The pid alone is not enough: Day2 runs verification jobs concurrently inside
@@ -48,11 +65,14 @@ pub(crate) fn unique_token() -> String {
 }
 
 /// A source tree staged for the container, as an uncompressed tar.
+///
+/// There is deliberately no `top_dir` field: every staged tar is re-rooted onto
+/// [`STAGED_TOP_DIR`], so the staging path is a constant rather than something a
+/// caller could get wrong or a submitter could influence.
 pub struct SourceArchive {
-    /// Uncompressed tar bytes, ready for `docker cp -`.
+    /// Uncompressed tar bytes, ready for `docker cp -`, rooted at
+    /// [`STAGED_TOP_DIR`].
     pub tar: Vec<u8>,
-    /// The archive's single top-level directory (SEP-58 step 4).
-    pub top_dir: String,
     /// sha256 of the bytes we fetched, as fetched.
     ///
     /// For `Archive` this is the checked `source_sha256`. For `Git` it is the
@@ -142,12 +162,10 @@ fn fetch_git(repo: &str, rev: &str) -> Result<SourceArchive> {
     // Digest the tar as `git archive` produced it: the identity of the source
     // is the commit's tree, not our staging fixups.
     let sha256 = sha256_hex(&archive.stdout);
-    let tar = normalize_ownership(&archive.stdout)?;
-    Ok(SourceArchive {
-        tar,
-        top_dir: "source".into(),
-        sha256,
-    })
+    // `--prefix=source/` above already matches STAGED_TOP_DIR, so the re-rooting
+    // is a no-op here; it runs anyway so the invariant has exactly one enforcer.
+    let tar = normalize_for_staging(&archive.stdout)?;
+    Ok(SourceArchive { tar, sha256 })
 }
 
 /// Download `uri`, check its digest, and normalise it to an uncompressed tar.
@@ -182,11 +200,13 @@ fn fetch_archive(uri: &str, expected_sha256: &str) -> Result<SourceArchive> {
     } else {
         bytes
     };
-    let top_dir = single_top_dir(&tar)?;
-    let tar = normalize_ownership(&tar)?;
+    // SEP-58 step 4 plus the traversal check. Its verdict is what makes the
+    // re-rooting below well-defined: exactly one top-level component, and no
+    // entry that could escape it.
+    single_top_dir(&tar)?;
+    let tar = normalize_for_staging(&tar)?;
     Ok(SourceArchive {
         tar,
-        top_dir,
         sha256: actual,
     })
 }
@@ -370,16 +390,25 @@ fn gunzip(bytes: &[u8]) -> Result<Vec<u8>> {
     Ok(out.stdout)
 }
 
-/// Rewrite every entry's ownership to the build image's `builder` user.
+/// Normalise a fetched tar into the shape we stage: `builder`-owned, rooted at
+/// [`STAGED_TOP_DIR`].
 ///
-/// `docker cp` restores the uid/gid recorded in the tar, and both of our source
-/// paths produce root-owned entries (`git archive` hardcodes uid 0; a published
-/// tarball carries whatever its author's machine had). Staged as-is, the tree
-/// would be unwritable by the non-root build. Rewriting here keeps the build
-/// itself unprivileged, rather than fixing it up by running the build as root.
+/// **Ownership.** `docker cp` restores the uid/gid recorded in the tar, and both
+/// of our source paths produce root-owned entries (`git archive` hardcodes uid 0;
+/// a published tarball carries whatever its author's machine had). Staged as-is,
+/// the tree would be unwritable by the non-root build. Rewriting here keeps the
+/// build itself unprivileged, rather than fixing it up by running the build as
+/// root.
 ///
-/// This changes no file *content*, so it cannot affect the resulting WASM.
-fn normalize_ownership(tar: &[u8]) -> Result<Vec<u8>> {
+/// **Top directory.** Every entry is re-rooted onto [`STAGED_TOP_DIR`] so the git
+/// and archive paths build at one absolute path — see that constant for why.
+///
+/// Neither rewrite touches file *content*. The path rewrite does change the
+/// build's working directory for the archive path, which is precisely the point;
+/// that it does not perturb the output is proven live, not assumed, by
+/// `reproduce_integration::verified_archive_source_uri` reproducing the fixture's
+/// on-chain hash byte-for-byte.
+fn normalize_for_staging(tar: &[u8]) -> Result<Vec<u8>> {
     let mut archive = tar::Archive::new(tar);
     let mut builder = tar::Builder::new(Vec::new());
     for entry in archive
@@ -394,23 +423,55 @@ fn normalize_ownership(tar: &[u8]) -> Result<Vec<u8>> {
         if is_pax_meta(&entry) {
             continue;
         }
-        let mut header = entry.header().clone();
-        header.set_uid(BUILDER_UID);
-        header.set_gid(BUILDER_UID);
+        // Build a fresh header instead of cloning the fetched one. tar headers
+        // carry several fixed-width name fields — `name`, `linkname`, and ustar's
+        // `prefix`, which holds the leading directories of a path too long for
+        // `name`. Writing a shorter value into one of them leaves the old bytes
+        // in the others, and GitHub's tarballs do use the `prefix` split: a
+        // cloned header re-rooted to `source/…` extracted as
+        // `<old prefix>/source/…`, so nested files landed off-tree and the build
+        // failed to read its own workspace members. Starting from zero cannot
+        // inherit a stale field, and it makes every staged tar one canonical
+        // format regardless of what shape we fetched.
+        let source_header = entry.header();
+        let entry_type = source_header.entry_type();
+        // Carried over, with a default when the field is unreadable. The previous
+        // implementation copied the header wholesale and so never parsed these;
+        // rejecting an archive over a malformed mode would be a new strictness
+        // this change has no business introducing. Mode still matters (an
+        // executable bit on a build script), so the default follows the entry
+        // type rather than being uniform.
+        let mode = source_header
+            .mode()
+            .unwrap_or(if entry_type.is_dir() { 0o755 } else { 0o644 });
+        let mtime = source_header.mtime().unwrap_or(0);
 
-        let path = entry
-            .path()
-            .map_err(|e| VerifyError::SourceFetch(format!("bad tar entry path: {e}")))?
-            .into_owned();
-        let link = entry
-            .link_name()
-            .map_err(|e| VerifyError::SourceFetch(format!("bad tar link name: {e}")))?
-            .map(|l| l.into_owned());
+        let path = restage_path(&entry.path_bytes())?;
+        let link = entry.link_name_bytes().map(|l| l.into_owned());
 
         let mut data = Vec::new();
         entry.read_to_end(&mut data)?;
 
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(entry_type);
+        header.set_mode(mode);
+        header.set_mtime(mtime);
+        header.set_size(data.len() as u64);
+        header.set_uid(BUILDER_UID);
+        header.set_gid(BUILDER_UID);
+
         if let Some(link) = link {
+            // A *hard* link's target is a path within the archive, so it carries
+            // the old top directory and has to be re-rooted with everything else.
+            // A *symlink*'s target is resolved at extraction relative to the link,
+            // so renaming the top directory leaves it correct — rewriting it would
+            // break it. (Absolute or escaping symlink targets are neither created
+            // nor validated here; that residual is docs/security.md S5.)
+            let link = if entry_type == tar::EntryType::Link {
+                restage_path(&link)?
+            } else {
+                entry_name(&link)?.to_owned()
+            };
             // Link targets live in the header, not the body; set_cksum happens
             // inside append_link.
             builder
@@ -426,6 +487,37 @@ fn normalize_ownership(tar: &[u8]) -> Result<Vec<u8>> {
     builder
         .into_inner()
         .map_err(|e| VerifyError::SourceFetch(format!("finishing rewritten tar: {e}")))
+}
+
+/// Replace a tar entry path's first component with [`STAGED_TOP_DIR`].
+///
+/// Works on the raw stored bytes rather than a `Path`: tar names are always
+/// `/`-separated, while `Path` semantics differ per platform (on Windows `\` is
+/// also a separator, and rebuilding a path there would emit the wrong bytes).
+/// Everything after the first component is copied verbatim, including the
+/// trailing `/` that marks a directory entry.
+///
+/// Callers must have established that there *is* exactly one top-level component
+/// and no traversal — [`single_top_dir`] for the archive path, `git archive
+/// --prefix` for the git one.
+fn restage_path(raw: &[u8]) -> Result<String> {
+    let rest = match raw.iter().position(|&b| b == b'/') {
+        Some(slash) => entry_name(&raw[slash..])?,
+        // No separator: this is the top-level directory entry itself.
+        None => "",
+    };
+    Ok(format!("{STAGED_TOP_DIR}{rest}"))
+}
+
+/// A tar entry name as UTF-8.
+///
+/// tar stores names as bytes, so this is a real (if narrow) restriction: an
+/// archive with a non-UTF-8 filename is refused rather than staged. Cargo already
+/// requires UTF-8 paths, and an untrusted archive carrying names that cannot be
+/// round-tripped is a smell — refusing beats guessing at an encoding.
+fn entry_name(raw: &[u8]) -> Result<&str> {
+    std::str::from_utf8(raw)
+        .map_err(|_| VerifyError::SourceFetch("source archive has a non-UTF-8 entry name".into()))
 }
 
 /// SEP-58 step 4: the archive must contain exactly one top-level directory.
@@ -565,5 +657,174 @@ mod tests {
             guard_public_url(&next).is_err(),
             "a redirect to the metadata endpoint must be refused"
         );
+    }
+
+    // --- Staging normalisation (STAGED_TOP_DIR) ---
+
+    /// A source tree under `top`, in the shape a fetched tar arrives in.
+    fn tar_under(top: &str, files: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut builder = tar::Builder::new(Vec::new());
+        let mut dir = tar::Header::new_gnu();
+        dir.set_entry_type(tar::EntryType::Directory);
+        dir.set_size(0);
+        dir.set_mode(0o755);
+        dir.set_cksum();
+        builder
+            .append_data(&mut dir, format!("{top}/"), &b""[..])
+            .unwrap();
+        for (name, data) in files {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(data.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, format!("{top}/{name}"), *data)
+                .unwrap();
+        }
+        builder.into_inner().unwrap()
+    }
+
+    /// Every entry's path, and its link target when it has one.
+    fn entries_of(tar: &[u8]) -> Vec<(String, Option<String>)> {
+        tar::Archive::new(tar)
+            .entries()
+            .unwrap()
+            .map(|e| {
+                let e = e.unwrap();
+                (
+                    e.path().unwrap().to_string_lossy().replace('\\', "/"),
+                    e.link_name()
+                        .unwrap()
+                        .map(|l| l.to_string_lossy().replace('\\', "/")),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn staging_reroots_an_archive_onto_the_constant_top_dir() {
+        // GitHub's tarballs are named <repo>-<sha>; that name must not reach the
+        // container, or the archive path builds somewhere the git path never does.
+        let tar = tar_under(
+            "sorofy-fixture-token-cd68767",
+            &[("Cargo.toml", b"[package]"), ("src/lib.rs", b"// x")],
+        );
+        let staged = normalize_for_staging(&tar).unwrap();
+
+        let paths: Vec<String> = entries_of(&staged).into_iter().map(|(p, _)| p).collect();
+        // The directory entry keeps its trailing `/`: only the first component is
+        // replaced, everything after it is copied verbatim.
+        assert_eq!(paths, ["source/", "source/Cargo.toml", "source/src/lib.rs"]);
+    }
+
+    #[test]
+    fn the_git_and_archive_shapes_stage_to_identical_bytes() {
+        // The invariant the whole change exists for: the same tree fetched as a
+        // repo and as a tarball must be indistinguishable once staged, so two
+        // verifiers handed different shapes cannot manufacture a `disagreement`.
+        let files: &[(&str, &[u8])] = &[("Cargo.toml", b"[package]"), ("src/lib.rs", b"// x")];
+        let from_git = normalize_for_staging(&tar_under("source", files)).unwrap();
+        let from_archive = normalize_for_staging(&tar_under("mycrate-abc123", files)).unwrap();
+
+        assert_eq!(
+            from_git, from_archive,
+            "staged tars must be byte-identical regardless of the fetched shape"
+        );
+    }
+
+    #[test]
+    fn a_path_too_long_for_the_name_field_survives_restaging() {
+        // GitHub roots its tarballs at <repo>-<40-char sha>, so any nested path
+        // overflows tar's 100-byte name field and travels in a long-name/pax
+        // extension entry. Re-rooting has to produce a tree the build can
+        // actually find: this is the case the live archive reproduction failed
+        // on with "failed to read /build/source/contracts/hello-world/Cargo.toml".
+        let top = "stellar-verify-fixture-hello-world-c08333e9924bfb45ee221f3edeb8ded4d4840397";
+        let tar = tar_under(top, &[("contracts/hello-world/Cargo.toml", b"[package]")]);
+
+        let staged = normalize_for_staging(&tar).unwrap();
+        let paths: Vec<String> = entries_of(&staged).into_iter().map(|(p, _)| p).collect();
+        assert_eq!(
+            paths,
+            ["source/", "source/contracts/hello-world/Cargo.toml"]
+        );
+    }
+
+    #[test]
+    fn ownership_is_rewritten_to_the_builder_user() {
+        // The other half of staging: `git archive` hardcodes uid 0, and the build
+        // runs as `builder` and must be able to write `target/` into the tree.
+        let staged = normalize_for_staging(&tar_under("x", &[("Cargo.toml", b"")])).unwrap();
+        for entry in tar::Archive::new(&staged[..]).entries().unwrap() {
+            let entry = entry.unwrap();
+            assert_eq!(entry.header().uid().unwrap(), BUILDER_UID);
+            assert_eq!(entry.header().gid().unwrap(), BUILDER_UID);
+        }
+    }
+
+    #[test]
+    fn a_hard_link_target_is_rerooted_but_a_symlink_target_is_not() {
+        // Hard-link targets are archive-internal paths, so they carry the old top
+        // dir; symlink targets resolve relative to the link and must survive
+        // untouched. Getting this backwards yields a dangling link at extraction.
+        let mut builder = tar::Builder::new(Vec::new());
+        let mut file = tar::Header::new_gnu();
+        file.set_size(4);
+        file.set_mode(0o644);
+        file.set_cksum();
+        builder
+            .append_data(&mut file, "pkg-1a2b/real.txt", &b"data"[..])
+            .unwrap();
+
+        let mut hard = tar::Header::new_gnu();
+        hard.set_entry_type(tar::EntryType::Link);
+        hard.set_size(0);
+        hard.set_mode(0o644);
+        builder
+            .append_link(&mut hard, "pkg-1a2b/hard.txt", "pkg-1a2b/real.txt")
+            .unwrap();
+
+        let mut sym = tar::Header::new_gnu();
+        sym.set_entry_type(tar::EntryType::Symlink);
+        sym.set_size(0);
+        sym.set_mode(0o777);
+        builder
+            .append_link(&mut sym, "pkg-1a2b/soft.txt", "real.txt")
+            .unwrap();
+
+        let staged = normalize_for_staging(&builder.into_inner().unwrap()).unwrap();
+        let entries = entries_of(&staged);
+
+        assert_eq!(entries[0].0, "source/real.txt");
+        assert_eq!(
+            entries[1],
+            ("source/hard.txt".into(), Some("source/real.txt".into()))
+        );
+        assert_eq!(
+            entries[2],
+            ("source/soft.txt".into(), Some("real.txt".into()))
+        );
+    }
+
+    #[test]
+    fn a_non_utf8_entry_name_is_refused() {
+        // Staging rewrites names, so they must round-trip as text. An archive that
+        // cannot is refused rather than staged under a guessed encoding.
+        let mut header = tar::Header::new_gnu();
+        header.set_size(0);
+        header.set_mode(0o644);
+        header.set_entry_type(tar::EntryType::Regular);
+        let name = b"pkg/\xff.rs";
+        header.as_old_mut().name[..name.len()].copy_from_slice(name);
+        header.set_cksum();
+
+        let mut builder = tar::Builder::new(Vec::new());
+        builder.append(&header, &b""[..]).unwrap();
+        let tar = builder.into_inner().unwrap();
+
+        assert!(matches!(
+            normalize_for_staging(&tar),
+            Err(VerifyError::SourceFetch(_))
+        ));
     }
 }
