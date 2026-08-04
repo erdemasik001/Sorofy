@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sorofy — Soroban contract verification</title>
+<meta name="description" content="Rebuild a Soroban contract from source in a pinned container and compare the WASM hash against the one on chain.">
+<link rel="stylesheet" href="/app.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'><rect width='128' height='128' rx='28' fill='%230d1117'/><g transform='translate(0 14)'><g fill='none' stroke-width='14' stroke-linecap='butt' stroke-linejoin='miter'><path d='M52 9 H36 L26 19 V40 L14 50 L26 60 V81 L36 91 H52' stroke='%23ffffff'/><path d='M76 9 H92 L102 19 V40 L114 50 L102 60 V81 L92 91 H76' stroke='%23ffc629'/></g><rect x='48' y='35' width='32' height='11' fill='%23ffc629'/><rect x='48' y='54' width='32' height='11' fill='%23ffc629'/></g></svg>">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="site-header__inner">
+    <a class="brandlink" href="#/" aria-label="Sorofy — home">
+      <svg class="brandmark" viewBox="0 0 128 100" role="img" aria-hidden="true" focusable="false">
+        <!-- `{` source, `}` bytecode, `=` the claim that they match.
+             Each brace is one stroked path: a horizontal arm turning inward at
+             top and bottom, 45° chamfered corners, and a point jutting outward
+             at mid-height. Miter joins keep the corners hard. -->
+        <g fill="none" stroke-width="14" stroke-linecap="butt" stroke-linejoin="miter">
+          <path class="b-src" d="M52 9 H36 L26 19 V40 L14 50 L26 60 V81 L36 91 H52"/>
+          <path class="b-out" d="M76 9 H92 L102 19 V40 L114 50 L102 60 V81 L92 91 H76"/>
+        </g>
+        <rect class="b-eq" x="48" y="35" width="32" height="11"/>
+        <rect class="b-eq" x="48" y="54" width="32" height="11"/>
+      </svg>
+      <span class="wordmark">Sorofy</span>
+      <span class="netbadge mono">TESTNET</span>
+    </a>
+    <button class="navtoggle" id="navtoggle" type="button"
+            aria-label="Menu" aria-expanded="false" aria-controls="sitenav">
+      <span class="bar"></span><span class="bar"></span><span class="bar"></span>
+    </button>
+    <nav id="sitenav">
+      <a class="navlink" href="#/" data-nav="home">Explorer</a>
+      <a class="navlink" href="#/metrics" data-nav="metrics">Metrics</a>
+      <a class="navlink" href="https://github.com/erdemasik001/Sorofy" rel="noreferrer noopener" target="_blank">
+        Source
+        <!-- Marks the one link that leaves the site. -->
+        <svg class="extlink" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+          <path d="M9 15 15 9M10 8h6v6"/>
+        </svg>
+        <span class="sr-only">(opens on GitHub)</span>
+      </a>
+    </nav>
+  </div>
+</header>
+
+<main id="view" aria-live="polite"></main>
+
+<footer class="site-footer">
+  <div class="site-footer__inner">
+    <span>Deterministic rebuild, compared against the on-chain hash.</span>
+    <span>Target hashes are resolved from the network — never taken from the submitter.</span>
+    <a href="https://github.com/erdemasik001/Sorofy">Repository</a>
+  </div>
+</footer>
+
+<script src="/app.js"></script>
+</body>
+</html>

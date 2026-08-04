@@ -46,6 +46,10 @@ const RATE_LIMIT_BURST: f64 = 10.0;
 /// without bound; when full, idle (fully-refilled) buckets are evicted first.
 const MAX_TRACKED_CLIENTS: usize = 4096;
 
+/// Page size for `GET /verifications` when the caller does not ask for one.
+/// `Db::recent` enforces the hard ceiling; this is just a sensible default.
+const DEFAULT_PAGE: u32 = 24;
+
 /// A token-bucket rate limiter keyed by principal. Cheap to clone (shared inner).
 #[derive(Clone)]
 struct RateLimiter {
@@ -230,9 +234,54 @@ impl AppState {
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(index))
+        .route(
+            "/app.css",
+            get(|headers: HeaderMap| async move {
+                asset(
+                    APP_CSS.as_bytes(),
+                    "text/css; charset=utf-8",
+                    etag_of(APP_CSS.as_bytes(), &CSS_ETAG),
+                    &headers,
+                )
+            }),
+        )
+        .route(
+            "/app.js",
+            get(|headers: HeaderMap| async move {
+                asset(
+                    APP_JS.as_bytes(),
+                    "text/javascript; charset=utf-8",
+                    etag_of(APP_JS.as_bytes(), &JS_ETAG),
+                    &headers,
+                )
+            }),
+        )
+        .route(
+            "/fonts/figtree-latin.woff2",
+            get(|headers: HeaderMap| async move {
+                asset(
+                    FONT_LATIN,
+                    "font/woff2",
+                    etag_of(FONT_LATIN, &FONT_ETAG),
+                    &headers,
+                )
+            }),
+        )
+        .route(
+            "/fonts/figtree-latin-ext.woff2",
+            get(|headers: HeaderMap| async move {
+                asset(
+                    FONT_LATIN_EXT,
+                    "font/woff2",
+                    etag_of(FONT_LATIN_EXT, &FONT_EXT_ETAG),
+                    &headers,
+                )
+            }),
+        )
         .route("/health", get(health))
         .route("/metrics", get(metrics))
         .route("/verify", post(start_verification))
+        .route("/verifications", get(list_verifications))
         .route("/verify/{key}", get(get_verification))
         .with_state(state)
         .layer(axum::middleware::from_fn(log_requests))
@@ -362,17 +411,104 @@ impl From<anyhow::Error> for ApiError {
     }
 }
 
-async fn index() -> Json<serde_json::Value> {
+/// The explorer, compiled into the binary.
+///
+/// `include_str!` rather than a static-file directory: the service ships as one
+/// container and one process, and an asset that can go missing at runtime is a
+/// deploy failure mode we would have to write a playbook step for. There is no
+/// build step, no package manager, and nothing fetched from a CDN — the page
+/// works on a host with no egress, which is the same property the build sandbox
+/// is held to.
+const INDEX_HTML: &str = include_str!("../static/index.html");
+const APP_CSS: &str = include_str!("../static/app.css");
+const APP_JS: &str = include_str!("../static/app.js");
+
+/// Figtree, SIL OFL 1.1 — the licence travels with the font in
+/// `static/fonts/OFL.txt`, which the OFL requires us to ship alongside it.
+/// Two subsets, split the way Google splits them, each a variable file covering
+/// weights 300–900.
+const FONT_LATIN: &[u8] = include_bytes!("../static/fonts/figtree-latin.woff2");
+const FONT_LATIN_EXT: &[u8] = include_bytes!("../static/fonts/figtree-latin-ext.woff2");
+
+/// `GET /` — the explorer for browsers, the endpoint listing for API clients.
+///
+/// Negotiated on `Accept` and deliberately biased to JSON: only a client that
+/// explicitly asks for `text/html` gets the page. A browser does (it leads with
+/// `text/html`), while `curl`'s `Accept: */*` keeps returning exactly the JSON it
+/// returned before the explorer existed, so no existing caller changes shape.
+async fn index(headers: HeaderMap) -> Response {
+    let wants_html = headers
+        .get(axum::http::header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|accept| accept.contains("text/html"));
+
+    if wants_html {
+        return asset(
+            INDEX_HTML.as_bytes(),
+            "text/html; charset=utf-8",
+            etag_of(INDEX_HTML.as_bytes(), &INDEX_ETAG),
+            &headers,
+        );
+    }
     Json(serde_json::json!({
         "service": "sorofy",
         "endpoints": {
             "POST /verify": "start a verification job",
             "GET /verify/{id|contract_id|wasm_hash}": "cached result",
+            "GET /verifications?limit=&offset=": "newest-first page of results",
             "GET /health": "liveness + cache ping",
             "GET /metrics": "job counters",
         },
     }))
+    .into_response()
 }
+
+/// Serve one embedded asset with its content type, validated by ETag.
+///
+/// The asset URLs are fixed, so they cannot carry a version — which rules out a
+/// plain `max-age`: the page and the stylesheet expire independently, and a
+/// deploy that changes both would happily pair new HTML with a cached old
+/// stylesheet. (Observed, not theorised: it served the previous palette after a
+/// rebuild.) `no-cache` does not mean "do not store", it means "revalidate
+/// before use", so with a content ETag the steady state is a 304 and a changed
+/// asset is picked up on the next load.
+fn asset(
+    body: &'static [u8],
+    content_type: &'static str,
+    etag: &str,
+    headers: &HeaderMap,
+) -> Response {
+    let known = headers
+        .get(axum::http::header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.split(',').any(|candidate| candidate.trim() == etag));
+
+    let base = [
+        (axum::http::header::CACHE_CONTROL, "no-cache".to_string()),
+        (axum::http::header::ETAG, etag.to_string()),
+    ];
+    if known {
+        return (StatusCode::NOT_MODIFIED, base).into_response();
+    }
+    (
+        base,
+        [(axum::http::header::CONTENT_TYPE, content_type)],
+        body,
+    )
+        .into_response()
+}
+
+/// `"sha256-prefix"` of an asset, computed once. Content-derived so it changes
+/// exactly when the asset does, and no more often.
+fn etag_of(body: &'static [u8], cell: &'static std::sync::OnceLock<String>) -> &'static str {
+    cell.get_or_init(|| format!("\"{}\"", &verifier_core::sha256_hex(body)[..16]))
+}
+
+static INDEX_ETAG: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+static CSS_ETAG: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+static JS_ETAG: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+static FONT_ETAG: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+static FONT_EXT_ETAG: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
 async fn start_verification(
     State(state): State<AppState>,
@@ -601,6 +737,38 @@ async fn run_job(
     }
 }
 
+/// Query string of `GET /verifications`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ListQuery {
+    limit: Option<u32>,
+    offset: Option<u32>,
+}
+
+/// Newest-first page of verifications — what the explorer's landing view reads.
+///
+/// Public, like the other reads: the cache *is* the product's public record, and
+/// a verification anyone can look up one at a time is not made more secret by
+/// being hard to enumerate.
+async fn list_verifications(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<ListQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let limit = query.limit.unwrap_or(DEFAULT_PAGE).min(crate::db::MAX_PAGE);
+    let offset = query.offset.unwrap_or(0);
+    let items = state.db.recent(limit, offset)?;
+    // `total` lets a client page without walking off the end; it is read after
+    // the page, so a job finishing in between can only make it a touch stale,
+    // never inconsistent with the rows already returned.
+    let total = state.db.count()?;
+    Ok(Json(serde_json::json!({
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "items": items,
+    })))
+}
+
 async fn get_verification(
     State(state): State<AppState>,
     Path(key): Path<String>,
@@ -625,6 +793,55 @@ mod tests {
         let mut h = HeaderMap::new();
         h.insert(axum::http::header::AUTHORIZATION, value.parse().unwrap());
         h
+    }
+
+    #[test]
+    fn the_embedded_assets_are_present_and_wired_together() {
+        // include_str! would fail the build if a file were missing, so what is
+        // worth asserting is that they still reference each other: a renamed
+        // route or a dropped tag turns the explorer into a blank page, and
+        // nothing else in the suite would notice.
+        assert!(
+            INDEX_HTML.contains("/app.css"),
+            "index must link the stylesheet"
+        );
+        assert!(INDEX_HTML.contains("/app.js"), "index must load the script");
+        assert!(
+            INDEX_HTML.contains("id=\"view\""),
+            "the script renders into #view"
+        );
+        assert!(
+            APP_CSS.contains(".brut-card"),
+            "the ported primitives must be there"
+        );
+        assert_eq!(&FONT_LATIN[..4], b"wOF2", "latin subset must be real WOFF2");
+        assert_eq!(
+            &FONT_LATIN_EXT[..4],
+            b"wOF2",
+            "latin-ext subset must be real WOFF2"
+        );
+        // The @font-face `src` and the routes must agree, or the browser asks
+        // for a URL that 404s and the page silently falls back to a system face.
+        assert!(APP_CSS.contains("/fonts/figtree-latin.woff2"));
+        assert!(APP_CSS.contains("/fonts/figtree-latin-ext.woff2"));
+        assert!(
+            APP_JS.contains("/verifications"),
+            "the explorer reads the listing endpoint"
+        );
+    }
+
+    #[test]
+    fn the_explorer_never_writes_untrusted_text_as_markup() {
+        // The build log is the output of compiling a stranger's source. It must
+        // reach the DOM as text; esc() covers the rest of the interpolations.
+        assert!(
+            APP_JS.contains("pre.textContent = row.report.build_log"),
+            "the build log must be inserted with textContent, not as markup"
+        );
+        assert!(
+            !APP_JS.contains("innerHTML = row"),
+            "no raw row interpolation"
+        );
     }
 
     #[test]
