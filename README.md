@@ -271,23 +271,6 @@ internet. Live status: [docs/testnet-roadmap.md](docs/testnet-roadmap.md). Full 
   consistent `VACUUM INTO` cache snapshots.
 - **Integration CI lane** — the real Docker/RPC reproduction tests now run in CI, not just by hand.
 
-**Honest status — what is still not true:**
-
-- **No live public URL yet.** Deploy artifacts are ready ([`docker/api/Dockerfile`](docker/api/Dockerfile),
-  [`fly.toml`](fly.toml), `.dockerignore`) and the procedure is written down end to end in the
-  [deploy playbook](docs/deploy-playbook.md) — what is missing is a host, not a decision.
-  This is the remaining Phase 0 item.
-- **Fetch-phase egress is not yet filtered.** The dependency-fetch container can still reach
-  internal addresses named by an attacker-controlled `Cargo.lock`. The code seam is in
-  (`VERIFY_FETCH_NETWORK`); the host firewall rules that give it teeth land with the deploy —
-  [ADR-0001](docs/adr/0001-fetch-egress-control.md) (G4-b).
-- **No TLS in front of the service.** The bearer token would travel in cleartext, so the
-  service must not be exposed until the playbook's reverse-proxy step is in place
-  ([security.md](docs/security.md) G7).
-- **`trust_level` hardcoded `arbitrary`** — the field is wired end-to-end; the allowlist that
-  promotes it to `publicly-auditable` / `sdf-maintained` is Phase 1.
-- **Single verifier** — decentralization is architected for, not yet built.
-
 **M2 — Testnet milestone · trust model, retroactive registry, decentralization**
 *(next milestone, after the current funded engagement; [Phases 1–3](docs/testnet-roadmap.md))*
 
