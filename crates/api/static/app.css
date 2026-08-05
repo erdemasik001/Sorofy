@@ -276,7 +276,29 @@ main { position: relative; z-index: 1; }
  * ink from the header and needs no network. This is the white-background
  * lockup from the brand sheet: dark left brace, yellow right brace and equals.
  */
-.brandmark { width: 44px; height: 34px; flex: none; display: block; }
+/* The mark sits in a brutalist tile rather than floating loose in the header —
+ * the same paper/2px/offset-shadow geometry as every other surface, and the
+ * shape the brand sheet's own icon-only variants use. Framing it lets the mark
+ * itself come down in size while reading as more present, not less. */
+.brandframe {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  background: var(--paper);
+  border: var(--border-w) solid var(--ink);
+  border-radius: 11px;
+  box-shadow: 3px 3px 0 0 var(--ink);
+  transition: transform 80ms ease, box-shadow 80ms ease;
+}
+/* Same press feedback as buttons and cards, so the wordmark link behaves like
+ * everything else that is clickable. */
+.brandlink:hover .brandframe { transform: translate(2px, 2px); box-shadow: 1px 1px 0 0 var(--ink); }
+.brandlink:active .brandframe { transform: translate(3px, 3px); box-shadow: 0 0 0 0 var(--ink); }
+
+.brandmark { width: 26px; height: 20px; flex: none; display: block; }
 /* Coloured from CSS rather than presentation attributes: `var()` inside an
  * attribute like stroke="var(--accent)" is not reliably substituted. */
 .brandmark .b-src { stroke: var(--ink); }
@@ -577,7 +599,8 @@ main { position: relative; z-index: 1; }
 @media (max-width: 640px) {
   .wrap { padding: 108px 18px 60px; }
   .site-header__inner { padding: 0 18px; }
-  .brandmark { width: 37px; height: 29px; }
+  .brandframe { width: 34px; height: 34px; border-radius: 9px; }
+  .brandmark { width: 22px; height: 17px; }
   .wordmark { font-size: 20px; }
   .status-panel { flex-direction: column; gap: 14px; }
 }
