@@ -330,9 +330,15 @@
 
   /* ── metrics ───────────────────────────────────────────────────────────── */
 
-  function metricTile(label, value, note) {
+  // `tone` colours the count and its label dot for the stats that carry a
+  // verdict (verified / mismatch / errored / in-flight); `live` pulses the dot
+  // while work is actually in progress. Both are optional — a plain tile passes
+  // neither and reads in ink.
+  function metricTile(label, value, note, tone, live) {
+    var dot = tone ? '<span class="tdot' + (live ? " live" : "") + '"></span>' : "";
     return (
-      '<div class="brut-tile"><div class="label">' + esc(label) + "</div>" +
+      '<div class="brut-tile metric-tile"' + (tone ? ' data-tone="' + esc(tone) + '"' : "") + ">" +
+      '<div class="label">' + dot + esc(label) + "</div>" +
       '<div class="metric">' + esc(value) + "</div>" +
       (note ? '<div class="metric__note">' + esc(note) + "</div>" : "") +
       "</div>"
@@ -371,12 +377,12 @@
             : "The API responded, but its cache did not: " + esc(h.body && h.body.error ? h.body.error : h.body.status)) +
           "</p></div></div>";
 
-        html += '<div class="tilegrid">' +
+        html += '<div class="statgrid">' +
           metricTile("Jobs submitted", d.jobs_submitted, "since this process started") +
-          metricTile("In flight", d.jobs_in_flight, "rebuilding right now") +
-          metricTile("Verified", d.verified) +
-          metricTile("Mismatch", d.mismatch) +
-          metricTile("Errored", d.error) +
+          metricTile("In flight", d.jobs_in_flight, "rebuilding right now", "accent", d.jobs_in_flight > 0) +
+          metricTile("Verified", d.verified, null, "ok") +
+          metricTile("Mismatch", d.mismatch, null, "danger") +
+          metricTile("Errored", d.error, null, "muted") +
           metricTile("Avg build", seconds(d.avg_build_seconds), "per completed rebuild") +
           "</div>";
 

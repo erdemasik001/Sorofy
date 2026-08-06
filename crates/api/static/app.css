@@ -86,6 +86,15 @@
   --radius-1: 14px;
   --radius-2: 20px;
 
+  /* Motion. One curve for the whole surface: a decelerating out-ease so every
+   * press and entrance settles rather than snaps. Emil's rule is to never
+   * ease-in on feedback (it feels sluggish) and to name the property that
+   * transitions, never `all` — both held to below. --press is the shared
+   * feedback duration for the translate-into-shadow gesture buttons, inputs and
+   * cards all use, so it can be tuned in one place. */
+  --ease-out: cubic-bezier(.2, .7, .2, 1);
+  --press: 90ms;
+
   /* Google Sans is the brand face (it is what the logo wordmark is set in), so
    * it leads the stack and is used wherever it is installed. It cannot be
    * shipped: it is proprietary, with no self-hosting licence, and fetching it
@@ -105,8 +114,18 @@
 
 html { scroll-behavior: smooth; background: var(--bg); }
 
+/* The ground is paper, so it gets a paper's tooth: a faint monochrome grain
+ * over the flat fill. The texture is generated in the file itself — an inline
+ * feTurbulence data URI, desaturated, tiled — so it costs no request and keeps
+ * the page's no-egress property. Fixed attachment so it stays put under the
+ * content rather than sliding as a second plane while you scroll. Kept at ~3.5%
+ * so it registers as substrate, never as noise you notice. */
 body {
-  background: var(--bg);
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.045'/%3E%3C/svg%3E")
+      repeat,
+    var(--bg);
+  background-attachment: fixed;
   color: var(--ink);
   font-family: var(--font-sans);
   font-feature-settings: "ss01", "cv11";
@@ -185,7 +204,7 @@ main { position: relative; z-index: 1; }
   padding: 12px 22px;
   cursor: pointer;
   text-decoration: none;
-  transition: transform 80ms ease, box-shadow 80ms ease, background 120ms ease;
+  transition: transform var(--press) var(--ease-out), box-shadow var(--press) var(--ease-out), background 140ms var(--ease-out);
 }
 .brut-btn:hover  { transform: translate(2px, 2px); box-shadow: 2px 2px 0 0 var(--border-c); }
 .brut-btn:active { transform: translate(4px, 4px); box-shadow: 0 0 0 0 var(--border-c); }
@@ -204,7 +223,7 @@ main { position: relative; z-index: 1; }
   font-size: 15px;
   font-weight: 500;
   outline: none;
-  transition: box-shadow 80ms ease, transform 80ms ease;
+  transition: box-shadow var(--press) var(--ease-out), transform var(--press) var(--ease-out);
   box-shadow: var(--shadow-1);
 }
 .brut-input:focus { transform: translate(2px, 2px); box-shadow: 2px 2px 0 0 var(--border-c); }
@@ -244,7 +263,7 @@ main { position: relative; z-index: 1; }
 .spin    { animation: spin 1s linear infinite; transform-origin: 50% 50%; }
 
 @media (prefers-reduced-motion: reduce) {
-  .fade-up, .spin, .hero__badge .dot { animation: none; }
+  .fade-up, .spin, .hero__badge .dot, .cardgrid .vcard, .metric-tile .tdot.live { animation: none; }
   html { scroll-behavior: auto; }
   * { transition: none !important; }
 }
@@ -291,7 +310,7 @@ main { position: relative; z-index: 1; }
   border: var(--border-w) solid var(--ink);
   border-radius: 11px;
   box-shadow: 3px 3px 0 0 var(--ink);
-  transition: transform 80ms ease, box-shadow 80ms ease;
+  transition: transform var(--press) var(--ease-out), box-shadow var(--press) var(--ease-out);
 }
 /* Same press feedback as buttons and cards, so the wordmark link behaves like
  * everything else that is clickable. */
@@ -342,7 +361,7 @@ main { position: relative; z-index: 1; }
   box-shadow: 3px 3px 0 0 var(--ink);
   cursor: pointer;
   color: var(--ink);
-  transition: transform 80ms ease, box-shadow 80ms ease;
+  transition: transform var(--press) var(--ease-out), box-shadow var(--press) var(--ease-out);
 }
 .navtoggle:active { transform: translate(3px, 3px); box-shadow: 0 0 0 0 var(--ink); }
 .navtoggle .bar { display: block; width: 18px; height: 2.5px; background: currentColor; border-radius: 2px; }
@@ -380,7 +399,7 @@ main { position: relative; z-index: 1; }
 
 .section { margin-bottom: 56px; }
 .section__head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 22px; flex-wrap: wrap; }
-.section__head h2 { font-size: 28px; font-weight: 900; letter-spacing: -0.04em; color: var(--ink); }
+.section__head h2 { font-size: 28px; font-weight: 900; letter-spacing: -0.04em; color: var(--ink); text-wrap: balance; }
 .counter {
   font-size: 13px; font-weight: 700; color: var(--ink-3);
   padding: 2px 9px; border: 2px solid var(--ink); border-radius: 999px; background: var(--paper);
@@ -411,6 +430,13 @@ main { position: relative; z-index: 1; }
 .stat-2up .v { font-family: var(--font-mono); font-size: 14px; font-weight: 700; color: var(--ink); }
 
 /* ─── Hero ────────────────────────────────────────────────────────────────── */
+/* The hero carries a huge, faint `{=}` behind the headline — the brand mark
+ * itself, blown up to bleed off the right edge. It gives the section the depth
+ * an all-text block otherwise lacks, and says what the product is before a word
+ * is read. Ink line-art at 5%, so it reads as a structural watermark rather
+ * than decoration, and `isolation` keeps it behind the copy without dropping it
+ * beneath the page's aurora. The SVG is generated inline (no request), the same
+ * two braces and equals the header lockup draws. */
 .hero { margin-bottom: 56px; }
 .hero__badge {
   display: inline-flex; align-items: center; gap: 8px;
@@ -436,26 +462,27 @@ main { position: relative; z-index: 1; }
   100% { box-shadow: 0 0 0 0 rgba(10, 138, 61, 0); }
 }
 .hero h1 {
-  font-size: clamp(40px, 7.5vw, 92px);
+  font-size: clamp(46px, 8.4vw, 108px);
   font-weight: 900;
   color: var(--ink);
-  line-height: 0.94;
-  letter-spacing: -0.05em;
-  margin-bottom: 24px;
+  line-height: 0.9;
+  letter-spacing: -0.055em;
+  margin-bottom: 26px;
+  text-wrap: balance;
 }
 /* The signature gesture: an accent sticker, rotated, with a hard shadow. */
 .sticker {
   display: inline-block;
   background: var(--accent);
   color: var(--ink);
-  padding: 0 14px;
+  padding: 0 16px;
   border: 2px solid var(--ink);
-  border-radius: 14px;
+  border-radius: 16px;
   transform: rotate(-1.5deg);
-  box-shadow: 5px 5px 0 0 var(--ink);
-  margin-top: 8px;
+  box-shadow: 6px 6px 0 0 var(--ink);
+  margin-top: 10px;
 }
-.hero__sub { font-size: 16px; color: var(--ink-3); max-width: 62ch; line-height: 1.55; }
+.hero__sub { font-size: 17px; color: var(--ink-2); max-width: 60ch; line-height: 1.62; text-wrap: pretty; }
 
 .searchbar { display: flex; gap: 12px; margin-top: 30px; flex-wrap: wrap; }
 .searchbar input { flex: 1 1 320px; }
@@ -471,7 +498,7 @@ main { position: relative; z-index: 1; }
   text-decoration: none;
   color: inherit;
   overflow: hidden;
-  transition: transform 80ms ease, box-shadow 80ms ease;
+  transition: transform var(--press) var(--ease-out), box-shadow var(--press) var(--ease-out);
 }
 .vcard:hover  { transform: translate(2px, 2px); box-shadow: 2px 2px 0 0 var(--border-c); }
 .vcard:active { transform: translate(4px, 4px); box-shadow: 0 0 0 0 var(--border-c); }
@@ -480,7 +507,12 @@ main { position: relative; z-index: 1; }
   padding: 12px 16px;
   border-bottom: 2px solid var(--ink);
   background: var(--paper-2);
+  transition: background var(--press) var(--ease-out);
 }
+/* The header warms on hover so the whole card answers the cursor, not just its
+ * shadow. Accent-soft is the readable member of the yellow family on paper, so
+ * the mono id and time over it keep their contrast. */
+.vcard:hover .vcard__top { background: var(--accent-soft); }
 .vcard__time { font-family: var(--font-mono); font-size: 11px; color: var(--ink-3); white-space: nowrap; }
 .vcard__body { padding: 18px 16px; display: flex; flex-direction: column; gap: 16px; flex: 1; }
 .vcard__id {
@@ -494,6 +526,19 @@ main { position: relative; z-index: 1; }
 .vcard__hash { font-family: var(--font-mono); font-size: 11px; color: var(--ink-3); word-break: break-all; }
 .vcard .stat-2up { margin-top: auto; }
 
+/* Cards arrive in a short staggered cascade rather than all at once, so the
+ * grid reads as populating and the eye is led down it. Decelerating ease, the
+ * same small translate the fade-up uses (nothing appears from nothing), and a
+ * per-position delay capped at the seventh card so a full page never drags.
+ * Purely presentational — dropped first under reduced-motion, below. */
+.cardgrid .vcard { animation: fadeUp .5s var(--ease-out) both; }
+.cardgrid .vcard:nth-child(2) { animation-delay: 40ms; }
+.cardgrid .vcard:nth-child(3) { animation-delay: 80ms; }
+.cardgrid .vcard:nth-child(4) { animation-delay: 120ms; }
+.cardgrid .vcard:nth-child(5) { animation-delay: 160ms; }
+.cardgrid .vcard:nth-child(6) { animation-delay: 200ms; }
+.cardgrid .vcard:nth-child(n+7) { animation-delay: 240ms; }
+
 /* ─── Detail ──────────────────────────────────────────────────────────────── */
 .backlink {
   display: inline-flex; align-items: center; gap: 7px;
@@ -504,8 +549,8 @@ main { position: relative; z-index: 1; }
 
 .status-panel { padding: 26px 24px; margin-bottom: 22px; display: flex; gap: 20px; align-items: flex-start; }
 .status-panel__icon { flex: none; }
-.status-panel h2 { font-size: 22px; font-weight: 900; letter-spacing: -0.03em; margin-bottom: 6px; }
-.status-panel p { font-size: 14px; color: var(--ink-3); line-height: 1.55; max-width: 62ch; }
+.status-panel h2 { font-size: 22px; font-weight: 900; letter-spacing: -0.03em; margin-bottom: 6px; text-wrap: balance; }
+.status-panel p { font-size: 14px; color: var(--ink-3); line-height: 1.55; max-width: 62ch; text-wrap: pretty; }
 
 /* Hash comparison — the product's whole claim in one block. */
 .hashcmp { padding: 18px 20px; margin-bottom: 22px; }
@@ -528,16 +573,58 @@ main { position: relative; z-index: 1; }
 .tilegrid > div { padding: 14px 16px; }
 .tilegrid .v { font-family: var(--font-mono); font-size: 13px; font-weight: 700; color: var(--ink); word-break: break-all; line-height: 1.5; }
 
-/* Metrics — the number is the point, so it gets the weight. */
+/* Metrics — a stat is scanned, not read: the number is the point, so it gets
+ * the weight and tabular figures. The counts that carry a verdict (verified /
+ * mismatch / errored) carry their status colour too — state encoded in hue, not
+ * only in the digits — and a dot repeats that tone at the label so the grid
+ * stays legible at a glance and to anyone who can't separate the colours. */
+.statgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 16px; margin-bottom: 22px; }
+/* A stat tile is a card, not a swatch: same paper, 2px border and offset
+ * shadow as everything else clickable-looking on the page, so the metrics grid
+ * reads as finished rather than as a row of flat chips. Laid out as a column so
+ * the note pins to the bottom (margin-top:auto) — that keeps every big number
+ * on the same baseline across the row even though only some tiles carry a note,
+ * which is what makes the grid look deliberate instead of ragged. */
+.metric-tile {
+  display: flex;
+  flex-direction: column;
+  padding: 18px 18px 16px;
+  background: var(--paper);
+  border-radius: 12px;
+  box-shadow: var(--shadow-1);
+}
+.metric-tile .label { display: flex; align-items: center; gap: 7px; margin-bottom: 0; }
+.metric-tile .tdot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-4); flex: none; }
+.metric-tile .metric { margin-top: 10px; }
+.metric-tile .metric__note { margin-top: auto; padding-top: 10px; }
 .metric {
   font-family: var(--font-mono);
-  font-size: 26px;
+  font-size: 32px;
   font-weight: 700;
   color: var(--ink);
   letter-spacing: -0.03em;
-  line-height: 1.15;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
 }
-.metric__note { font-size: 11px; color: var(--ink-3); margin-top: 4px; }
+.metric__note { font-size: 11px; color: var(--ink-3); margin-top: 6px; }
+
+.metric-tile[data-tone="ok"]     .metric { color: var(--ok); }
+.metric-tile[data-tone="ok"]     .tdot   { background: var(--ok); }
+.metric-tile[data-tone="danger"] .metric { color: var(--danger); }
+.metric-tile[data-tone="danger"] .tdot   { background: var(--danger); }
+.metric-tile[data-tone="accent"] .metric { color: var(--accent-ink); }
+.metric-tile[data-tone="accent"] .tdot   { background: var(--accent-press); }
+.metric-tile[data-tone="muted"]  .metric { color: var(--ink-3); }
+.metric-tile[data-tone="muted"]  .tdot   { background: var(--ink-4); }
+
+/* The in-flight count is live: while anything is rebuilding, its dot pulses in
+ * the accent — the same "now" signal the hero badge uses. */
+.metric-tile .tdot.live { animation: tdotpulse 2.4s ease-out infinite; }
+@keyframes tdotpulse {
+  0%   { box-shadow: 0 0 0 0 rgba(237, 177, 0, 0.5); }
+  70%  { box-shadow: 0 0 0 7px rgba(237, 177, 0, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(237, 177, 0, 0); }
+}
 
 .logbox { padding: 16px 18px; }
 .logbox pre {
@@ -554,8 +641,8 @@ main { position: relative; z-index: 1; }
 
 /* ─── States ──────────────────────────────────────────────────────────────── */
 .state { padding: 56px 28px; text-align: center; }
-.state h3 { font-size: 20px; font-weight: 900; letter-spacing: -0.02em; margin: 14px 0 6px; }
-.state p { font-size: 14px; color: var(--ink-3); max-width: 52ch; margin: 0 auto; line-height: 1.55; }
+.state h3 { font-size: 20px; font-weight: 900; letter-spacing: -0.02em; margin: 14px 0 6px; text-wrap: balance; }
+.state p { font-size: 14px; color: var(--ink-3); max-width: 52ch; margin: 0 auto; line-height: 1.55; text-wrap: pretty; }
 
 .pager { display: flex; gap: 12px; align-items: center; justify-content: center; margin-top: 34px; }
 .pager__at { font-family: var(--font-mono); font-size: 12px; color: var(--ink-3); }
@@ -597,10 +684,27 @@ main { position: relative; z-index: 1; }
 }
 
 @media (max-width: 640px) {
-  .wrap { padding: 108px 18px 60px; }
+  .wrap { padding: 104px 18px 56px; }
   .site-header__inner { padding: 0 18px; }
   .brandframe { width: 34px; height: 34px; border-radius: 9px; }
   .brandmark { width: 22px; height: 17px; }
   .wordmark { font-size: 20px; }
   .status-panel { flex-direction: column; gap: 14px; }
+
+  /* The headline floor (46px) overflows a phone column on long words, so it is
+   * re-clamped to the viewport here — still the biggest thing on screen, but it
+   * fits. */
+  .hero h1 { font-size: clamp(32px, 8.6vw, 46px); }
+  .hero__sub { font-size: 16px; }
+  .hero { margin-bottom: 44px; }
+
+  /* The result grid's 320px track min is wider than a small phone's content
+   * box, which would force a horizontal scroll — so on phones it collapses to a
+   * single full-width column. minmax(0,…) lets the column shrink below the
+   * intrinsic width of a long unbroken hash. */
+  .cardgrid { grid-template-columns: minmax(0, 1fr); }
+
+  /* Full-width search button: a comfortable tap target once it wraps under the
+   * input, instead of a small control floating at the left. */
+  .searchbar .brut-btn { width: 100%; }
 }
