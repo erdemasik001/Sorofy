@@ -430,13 +430,6 @@ main { position: relative; z-index: 1; }
 .stat-2up .v { font-family: var(--font-mono); font-size: 14px; font-weight: 700; color: var(--ink); }
 
 /* ─── Hero ────────────────────────────────────────────────────────────────── */
-/* The hero carries a huge, faint `{=}` behind the headline — the brand mark
- * itself, blown up to bleed off the right edge. It gives the section the depth
- * an all-text block otherwise lacks, and says what the product is before a word
- * is read. Ink line-art at 5%, so it reads as a structural watermark rather
- * than decoration, and `isolation` keeps it behind the copy without dropping it
- * beneath the page's aurora. The SVG is generated inline (no request), the same
- * two braces and equals the header lockup draws. */
 .hero { margin-bottom: 56px; }
 .hero__badge {
   display: inline-flex; align-items: center; gap: 8px;
@@ -462,32 +455,26 @@ main { position: relative; z-index: 1; }
   100% { box-shadow: 0 0 0 0 rgba(10, 138, 61, 0); }
 }
 .hero h1 {
-  font-size: clamp(44px, 6vw, 80px);
+  font-size: clamp(40px, 7.5vw, 92px);
   font-weight: 900;
   color: var(--ink);
   line-height: 0.94;
   letter-spacing: -0.05em;
-  margin-bottom: 26px;
+  margin-bottom: 24px;
 }
-/* The first line is one statement, so on the web it stays on one line — the
- * voice depends on "Don't trust the bytecode." reading as a single piece, with
- * the accent sticker dropping to the line below. The size is capped so that one
- * line always fits the column; on phones the lead is allowed to wrap (see the
- * narrow breakpoint), where forcing one line would shrink the type too far. */
-.hero__lead { white-space: nowrap; }
 /* The signature gesture: an accent sticker, rotated, with a hard shadow. */
 .sticker {
   display: inline-block;
   background: var(--accent);
   color: var(--ink);
-  padding: 0 16px;
+  padding: 0 14px;
   border: 2px solid var(--ink);
-  border-radius: 16px;
+  border-radius: 14px;
   transform: rotate(-1.5deg);
-  box-shadow: 6px 6px 0 0 var(--ink);
-  margin-top: 10px;
+  box-shadow: 5px 5px 0 0 var(--ink);
+  margin-top: 8px;
 }
-.hero__sub { font-size: 17px; color: var(--ink-2); max-width: 60ch; line-height: 1.62; text-wrap: pretty; }
+.hero__sub { font-size: 16px; color: var(--ink-3); max-width: 62ch; line-height: 1.55; }
 
 .searchbar { display: flex; gap: 12px; margin-top: 30px; flex-wrap: wrap; }
 .searchbar input { flex: 1 1 320px; }
@@ -689,20 +676,12 @@ main { position: relative; z-index: 1; }
 }
 
 @media (max-width: 640px) {
-  .wrap { padding: 104px 18px 56px; }
+  .wrap { padding: 108px 18px 60px; }
   .site-header__inner { padding: 0 18px; }
   .brandframe { width: 34px; height: 34px; border-radius: 9px; }
   .brandmark { width: 22px; height: 17px; }
   .wordmark { font-size: 20px; }
   .status-panel { flex-direction: column; gap: 14px; }
-
-  /* On a phone the lead is allowed to wrap and the type grows: a single line
-   * would force it far too small. "Don't trust the bytecode." stacks across two
-   * or three lines, the sticker sits below it, and it reads big and confident. */
-  .hero h1 { font-size: clamp(40px, 12vw, 62px); }
-  .hero__lead { white-space: normal; }
-  .hero__sub { font-size: 16px; }
-  .hero { margin-bottom: 44px; }
 
   /* The result grid's 320px track min is wider than a small phone's content
    * box, which would force a horizontal scroll — so on phones it collapses to a

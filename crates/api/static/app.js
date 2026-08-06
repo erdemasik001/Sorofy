@@ -155,7 +155,7 @@
     return (
       '<section class="hero fade-up">' +
       '<span class="hero__badge mono"><span class="dot"></span>Live on Stellar Testnet</span>' +
-      "<h1><span class=\"hero__lead\">Don't trust the bytecode.</span><br>" +
+      "<h1>Don't trust the bytecode.<br>" +
       '<span class="sticker">Rebuild it.</span></h1>' +
       '<p class="hero__sub">A contract on chain is just bytecode. Sorofy rebuilds the source in a ' +
       "digest-pinned container and compares the result against the hash the network itself reports — " +
