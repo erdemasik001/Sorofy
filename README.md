@@ -287,9 +287,6 @@ internet. Live status: [docs/testnet-roadmap.md](docs/testnet-roadmap.md). Full 
 - Third-party audit via the Soroban **Audit Bank**.
 - At least one reference integration (ideally **Stellar Lab**).
 
-Directly funded by the SCF **Contract Source Verification Service** RFP — Build Award cap
-**$150K XLM**, tranches **10 / 20 / 30 / 40** at acceptance / MVP / testnet / mainnet.
-
 ## License
 
 MIT
