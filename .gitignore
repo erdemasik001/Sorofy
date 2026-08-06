@@ -7,3 +7,13 @@
 # verify-core --emit-wasm writes rebuilt artifacts into the working dir.
 *.wasm
 .DS_Store
+
+# Design-assistant skills installed via `npx skills` / impeccable — local dev
+# tooling (design-taste, emil, impeccable), not part of the product.
+.agents/
+.codex/
+.claude/skills/
+.github/agents/
+.github/hooks/
+.github/skills/
+skills-lock.json
