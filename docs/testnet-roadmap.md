@@ -35,7 +35,7 @@ It funds exactly three deliverables, and its out-of-scope list is explicit:
 | SOW deliverable | Status | What is missing |
 |---|---|---|
 | **1. Deterministic build engine** (`verify-core` CLI, digest-pinned image, sha256 vs on-chain) | ✅ Built **and run on the live host** — `VERIFIED` (exit 0) on the fixture, `MISMATCH` (exit 1) on a one-word source change | A screenshot of those two runs |
-| **2. Public REST API, **live on testnet**, cached, `trust_level` in the schema | ✅ **Live** at [`https://sorofy.site`](https://sorofy.site) — 13 contracts verified through it, `trust_level` in the response | A screenshot of a `GET` returning JSON |
+| **2. Public REST API, **live on testnet**, cached, `trust_level` in the schema | ✅ **Live** at [`https://sorofy.site`](https://sorofy.site) — **two distinct testnet contracts** verified through it against RPC-resolved hashes, `trust_level` in the response | A screenshot of a `GET` returning JSON |
 | **3. Retroactive path** (source + vetted `bldimg` out-of-band, ≥1 real pre-SEP-58 contract) | ✅ Proven (day3) | A demo recording plus the contract id |
 
 **Explicitly out of SOW scope:** multi-verifier/decentralisation ("architected and
@@ -49,9 +49,10 @@ registry with a submission and moderation flow. Everything else in this document
 post-SOW.
 
 **Status 2026-08-16:** 0.7 shipped and the service is live, so all three funded
-deliverables are *built and running*. What is left of the SOW is **evidence capture** —
-two screenshots, a demo recording, and a one-page delivery note — plus the
-`demo.ps1` parameterisation that lets the recording target the live service.
+deliverables are *built and running*, and C2 is closed with a second testnet contract
+deployed and verified through the live API (inventory below). What is left of the SOW is
+**evidence capture** — two screenshots and a demo recording. Everything they document is
+already true against the live URL.
 
 ### Delivery plan
 
@@ -63,19 +64,35 @@ live URL and a recording carry more weight at sign-off than any amount of code.
 
 | Block | Work | Status |
 |---|---|---|
-| **A — Evidence that needs nothing** | A1 `verify-core` showing `verified` and, on altered source, `mismatch` · A2 parameterise [`scripts/demo.ps1`](../scripts/demo.ps1), whose API URL was hardcoded to localhost, so the recording can run against the live service · A3 a one-page delivery note aimed at a non-technical reviewer | A1 ✅ run · A2 ⬜ · A3 ✅ [delivery-note.md](delivery-note.md) |
+| **A — Evidence that needs nothing** | A1 `verify-core` showing `verified` and, on altered source, `mismatch` · A2 parameterise [`scripts/demo.ps1`](../scripts/demo.ps1), whose API URL was hardcoded to localhost, so the recording can run against the live service · A3 a one-page delivery note aimed at a non-technical reviewer | A1 ✅ run · A2 ✅ (`-Api` parameter, commit `d796df9`) · A3 ✅ [delivery-note.md](delivery-note.md) |
 | **B — Deploy** | The [playbook](deploy-playbook.md) end to end: host baseline → fetch network + egress rules → image → run → TLS → the 11 smoke tests | ✅ **Done 2026-08-16**, 11/11 passed |
-| **C — Evidence on the live service** | C1 screenshot of `GET /verify/{id}` returning JSON with `status` and `trust_level` · C2 verify 2–3 real testnet contracts through the live API · C3 record the demo (retroactive verify, then tamper → `mismatch`) | C2 ✅ · C1 ⬜ · C3 ⬜ |
+| **C — Evidence on the live service** | C1 screenshot of `GET /verify/{id}` returning JSON with `status` and `trust_level` · C2 verify 2–3 real testnet contracts through the live API · C3 record the demo (retroactive verify, then tamper → `mismatch`) | C2 ✅ **2 contracts, both RPC-resolved** (inventory below) · C1 ⬜ · C3 ⬜ |
 | **D — Close the paperwork** | Playbook step 7: live URL into the README, G4-b + G7 closed, ADR action items 2–4 ticked, 0.7 done | ✅ Done |
 
-**Contract inventory for C2:** both are verified through the live service —
-`CAZAVVTM…` (the real-size token, reproduced against its RPC-resolved hash) and the
-hello-world fixture (660 B, used for the tamper case). The SOW asks for 2–3; a third
-would mean deploying another `soroban-examples` contract to testnet.
+**Contract inventory for C2.** The SOW asks for 2–3 *real testnet contracts*, and the
+bar it sets is a hash **resolved from the network**, not asserted by the caller — a
+fixture verified against a hash we supplied does not clear it, however real the rebuild
+was. Two contracts now do:
 
-**What remains is evidence capture, not engineering:** A2 (a PowerShell edit), A3 (a
-page of prose), and the two screenshots plus the recording. Every claim they document
-is already true and reproducible against the live URL.
+| Contract | WASM | Source shape | Target hash |
+|---|---|---|---|
+| [`CAZAVVTM…`](https://stellar.expert/explorer/testnet/contract/CAZAVVTM3GXFNCLR66FYHJJ43MEEUV3C6PQYRQT5JVGAO2RS6S4OHRT6) | token, 8 584 B, `47d2801e…` | `repo`+`rev` **and** SEP-58 archive | resolved via RPC |
+| [`CAEA4BXA…`](https://stellar.expert/explorer/testnet/contract/CAEA4BXANQ2JQR4AF5XG53A25LU5N2QERRFC5P7ZY4W6YDQ4DGLEZRYH) | hello-world, 660 B, `b68602…` | `repo`+`rev` | resolved via RPC |
+
+`CAEA4BXA…` was deployed 2026-08-16 to close this row. The hello-world fixture had
+only ever been verified against a **caller-supplied** `wasm_hash`, so it evidenced the
+source and response machinery but not the on-chain lookup. The artifact deployed is the
+one the pinned image produces — built at `c08333e9…` in
+`sha256:cff44167…`, sha256 checked as `b68602…` *before* the deploy — so the on-chain
+hash is by construction one the engine lands on again. Live job
+[`17`](https://sorofy.site/verify/17): `expected == rebuilt == b68602…`, 81.1 s.
+
+A third contract would exercise the same lookup path a third time; the two above
+already cover both source shapes and both size classes.
+
+**What remains is evidence capture, not engineering:** the two screenshots (C1, and the
+`verify-core` pair for A1) and the recording (C3). Every claim they document is already
+true and reproducible against the live URL.
 
 ## Definition of "flawless" (the bar every phase is held to)
 
@@ -158,8 +175,12 @@ public exposure.
   (2026-08-16). Contabo Cloud VPS 4 (4 vCPU / 8 GB / 100 GB, Ubuntu 24.04, ext4),
   Docker-out-of-Docker over the host socket, Caddy terminating TLS with a Let's Encrypt
   certificate, API published on loopback only. The [playbook](deploy-playbook.md) ran end
-  to end and all 11 smoke tests passed; SLO baseline `avg_build_seconds` **86.49** over 14
-  jobs (13 `verified`, 1 deliberate `mismatch`, 0 errors)
+  to end and all 11 smoke tests passed; SLO baseline **at the deploy**
+  `avg_build_seconds` **86.49** over 14 jobs (13 `verified`, 1 deliberate `mismatch`, 0
+  errors). Read as a dated baseline, not a running total: `/metrics` counters are
+  process-lifetime and reset on restart, while the cache does not — the cumulative
+  figures live in the [README](../README.md) and are recomputable from
+  `GET /verifications`
 - [x] **0.8 Narrative update** — README + pitch deck reflect the post-award posture: what Phase 0 delivered, and an honest "not yet true" list (deploy, fetch egress, trust levels, single verifier)
 - [x] **0.9 Sandbox hardening** — build resource limits (G1) + SSRF guard (G4), surfaced by 0.1 (commit `3541656`)
 - [x] **0.10 Sandbox hardening completion (retrospective)** — G1 disk quota + `--memory-swap` ✅, G6 `--cap-drop=ALL`/`no-new-privileges` ✅, G4-a per-hop redirect re-validation ✅, G4-b fetch-egress code seam ✅ (`VERIFY_FETCH_NETWORK`) **and its host firewall rules + smoke test ✅**, installed by `sorofy-egress.service` and verified live from the fetch network — metadata and RFC-1918 blocked, crates.io and GitHub reachable ([ADR-0001](adr/0001-fetch-egress-control.md))
@@ -176,6 +197,12 @@ explorer — defense-in-depth behind escaping that already works), auth resolvin
 axum's JSON extractor (not a bypass; a well-formed unauthenticated `POST` still returns
 401), and `/metrics` counters being process-lifetime, so the SLO baseline must be read
 before a restart.
+
+**The first two are since closed** (same day): the bearer gate moved to a route layer
+ahead of body extraction, and a strict CSP + `nosniff` + `no-referrer` now ride every
+response (`e749c1f`, `683a5e8`), both verified live and covered by tests. The third is
+not a defect but a property of the counters, documented in
+[api-reference.md](api-reference.md).
 
 The table below is the rationale for each item.
 

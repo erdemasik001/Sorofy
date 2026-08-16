@@ -340,7 +340,7 @@
         <span class="chip"><span class="dot"></span>Rust · Axum · Docker</span>
         <span class="chip"><span class="dot"></span>Open source · MIT</span>
       </div>
-      <p class="hero__meta">SCF RFP — Contract Source Verification Service · awarded MVP, now hardening for testnet</p>
+      <p class="hero__meta">SCF RFP — Contract Source Verification Service · awarded MVP · live on testnet</p>
     </div>
   </section>
 
@@ -567,8 +567,9 @@
             <li><b>Hardened sandbox</b> — mem/CPU/PID/swap caps, <code>--cap-drop=ALL</code>, <code>no-new-privileges</code>, SSRF guard re-validating every redirect hop</li>
             <li><b>Operable</b> — <code>/health</code>, <code>/metrics</code>, structured logs, schema migrations, cache snapshots</li>
             <li><b>Proven in CI</b> — the real Docker/RPC reproduction suite runs on every merge, not just by hand</li>
-            <li><b>Live on testnet</b> — <code>https://sorofy.site</code>, TLS-terminated, API on loopback only; 13 verified + 1 deliberate mismatch, 0 errors, avg build 86.5&nbsp;s</li>
+            <li><b>Live on testnet</b> — <code>https://sorofy.site</code>, TLS-terminated, API on loopback only; <b>two real testnet contracts</b> verified against RPC-resolved hashes, 15 verified + 1 deliberate mismatch + 1 deliberate refusal across 17 jobs, avg build 85.9&nbsp;s</li>
             <li><b>Filtered fetch egress</b> — the host firewall now drops the fetch network to every internal range, reinstalled on boot and verified live (metadata and RFC-1918 blocked, crates.io reachable)</li>
+            <li><b>Strict CSP on the explorer</b> — <code>default-src 'none'</code>, no <code>unsafe-inline</code>, plus <code>nosniff</code>; the layer behind the output escaping, so a future slip is a blocked script rather than an executed one (G8)</li>
           </ul>
         </div>
         <div class="col col--deferred">
@@ -576,7 +577,7 @@
           <ul>
             <li><b>trust_level hardcoded <code>arbitrary</code></b> — the allowlist / multi-verifier surface (M2) is where the other tiers come from</li>
             <li><b>Single verifier</b> — decentralization is architected for, not yet built</li>
-            <li><b>No CSP on the explorer</b> — output escaping is tested and holds; the header layer behind it is not there yet (G8)</li>
+            <li><b>Retroactive <i>registry</i></b> — the path is proven end-to-end; the submission/moderation layer around it is M2</li>
           </ul>
         </div>
       </div>

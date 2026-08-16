@@ -14,7 +14,7 @@
     # Put the token in the environment, NOT on the command line: this run is
     # being recorded, and the bearer token gates a socket-mounted host.
     $env:SOROFY_API_TOKEN = '<token from /home/sorofy/api-token>'
-    powershell -ExecutionPolicy Bypass -File scripts\demo.ps1 -Api https://verify.example.com
+    powershell -ExecutionPolicy Bypass -File scripts\demo.ps1 -Api https://sorofy.site
 
   AGAINST A LOCAL INSTANCE:
     # WSL2 Docker reachable + the build image pulled (pre-warm so the recorded

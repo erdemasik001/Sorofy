@@ -18,7 +18,7 @@ checks whether the result is byte-for-byte identical to what is on-chain.
 | # | Deliverable | Status |
 |---|---|---|
 | 1 | A build engine that rebuilds a contract from source and compares it to the on-chain bytes | ✅ Built and running |
-| 2 | A public API, live on testnet, that anyone can query | ✅ Live at <https://sorofy.site> |
+| 2 | A public API, live on testnet, that anyone can query | ✅ Live at <https://sorofy.site> — two real testnet contracts checked through it |
 | 3 | A path for contracts that carry no source information on-chain | ✅ Proven |
 
 All three are delivered. Everything below can be checked without installing anything.
@@ -26,6 +26,7 @@ All three are delivered. Everything below can be checked without installing anyt
 ## How to verify it yourself, in 30 seconds
 
 **Open this link:** [a verified contract](https://sorofy.site/verify/CAZAVVTM3GXFNCLR66FYHJJ43MEEUV3C6PQYRQT5JVGAO2RS6S4OHRT6)
+· and [a second one](https://sorofy.site/verify/CAEA4BXANQ2JQR4AF5XG53A25LU5N2QERRFC5P7ZY4W6YDQ4DGLEZRYH)
 
 You will see two long strings of letters and numbers:
 
@@ -75,11 +76,15 @@ open — is kept in the repository. Nothing was quietly dropped.
 
 | | |
 |---|---|
-| Contracts checked through the live service | 14 |
-| Correctly reported `verified` | 13 |
+| Checks run through the live service | 17 |
+| Correctly reported `verified` | 15 |
 | Correctly reported `mismatch` (deliberate test) | 1 |
-| Errors | 0 |
-| Average time to rebuild and check a contract | 87 seconds |
+| Correctly **refused** (deliberate test: a build environment that could be swapped after the fact) | 1 |
+| Wrong answers | 0 |
+| Average time to rebuild and check a contract | 86 seconds |
+
+Anyone can recompute this list at <https://sorofy.site/verifications> — it is the
+service's own record, not a figure typed into a document.
 
 ## What comes next, and is not part of this engagement
 

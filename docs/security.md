@@ -181,7 +181,7 @@ cannot be reached around the proxy — both in the
 | **G5** | Socket mount = host root (tenancy) | Med | Accepted single-tenant; rootless/proxy tracked for post-M2 |
 | **G6** | No `--cap-drop=ALL` / `--security-opt=no-new-privileges` on the build container | Med | Container hardening — **done**: both flags set on fetch+build via `SecurityOpts` (see status update) |
 | **G7** | No TLS — the bearer token that gates `POST /verify` travels in cleartext | High | **Done**: TLS-terminating reverse proxy + loopback-only publish, live since the 0.7 deploy (see status update) |
-| **G8** | No response security headers (CSP / nosniff / frame-ancestors) on the browsable explorer, which renders attacker-supplied build logs | Low | Open — defense-in-depth behind the escaping that already works (S8, see 0.7 deploy findings) |
+| **G8** | No response security headers (CSP / nosniff / frame-ancestors) on the browsable explorer, which renders attacker-supplied build logs | Low | **Done** (`e749c1f`, `683a5e8`): strict CSP + `nosniff` + `no-referrer` on every response, verified live — see the G8 entry below |
 
 ## Residual risk & decisions
 
@@ -369,15 +369,26 @@ goes through `esc()` and the log is written with `textContent`, verified by seed
 with script tags and event handlers in every rendered field. That is the control that
 matters, and it holds.
 
-**Gap G8 — no response security headers.** Defense-in-depth is missing: the page is
+**Gap G8 — no response security headers. *(closed 2026-08-16)*** As found: the page was
 served with no `Content-Security-Policy`, `X-Content-Type-Options: nosniff`, or
-`X-Frame-Options`/`frame-ancestors`. A CSP in particular would turn any future escaping
-slip from "script executes" into "script blocked", which is exactly the margin worth
-having on a page whose content originates with strangers. Severity is Low — it is a
-second layer behind a working first one — and the fix belongs with the assets, which are
-compiled into the binary, so it is a code change rather than deploy config. Note that
-`Strict-Transport-Security` *is* now set (see G7), but that is a transport control, not
-a content one.
+`X-Frame-Options`/`frame-ancestors`. A CSP in particular turns any future escaping slip
+from "script executes" into "script blocked", which is exactly the margin worth having on
+a page whose content originates with strangers. Severity Low — a second layer behind a
+working first one — and the fix belonged with the assets, which are compiled into the
+binary, so it was a code change rather than deploy config.
+
+**Closed** in `e749c1f`: a `security_headers` layer sets `default-src 'none'` with
+`script-src`/`style-src`/`font-src`/`connect-src 'self'`, `img-src 'self' data:`,
+`base-uri 'none'`, `form-action 'self'` and `frame-ancestors 'none'`, plus `nosniff` and
+`Referrer-Policy: no-referrer`, on every response. The policy carries no `unsafe-inline`
+because the page was written without a single inline script, style or handler — and a
+test asserts both halves, so loosening the policy or reintroducing an inline style fails
+the suite. Landing it surfaced one real violation: `app.js` was building a `style=` span
+at runtime, blocked by `style-src`; `683a5e8` moved the last two inline styles into
+classes rather than relaxing the directive. Verified live — the header is present on
+`https://sorofy.site` and the explorer renders with no console errors.
+`Strict-Transport-Security` is set at the proxy (see G7), a transport control alongside
+these content ones.
 
 ### Auth runs after the JSON extractor, not before *(low)*
 

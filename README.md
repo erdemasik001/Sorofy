@@ -73,7 +73,8 @@ flowchart TD
 | Real `bldimg` digest | Image published to GHCR (single-arch, `sha256:cff44167…`); digest enforcement on by default — bare tags rejected before any container — [day3](docs/day3-deploy-demo.md) |
 | Hardening doesn't break the build | The same fixture still reproduces byte-for-byte with the swap/capability/privilege caps applied and the fetch phase pinned to a dedicated network — [security.md](docs/security.md) |
 | Tested in CI, not just locally | The `#[ignore]`d suite — 6 reproduction cases (real containers) + live RPC lookups — runs on merges to `master` via [`integration.yml`](.github/workflows/integration.yml) |
-| Live, not just deployable | [`https://sorofy.site`](https://sorofy.site) serves the result of a real rebuild run on that host: 13 `verified`, 1 deliberate `mismatch`, 0 errors across 14 jobs, average build 86.5 s — [roadmap 0.7](docs/testnet-roadmap.md) |
+| Live, not just deployable | [`https://sorofy.site`](https://sorofy.site) serves the results of real rebuilds run on that host: 17 jobs — 15 `verified`, 1 deliberate `mismatch`, 1 deliberate `error` (a bare-tag `bldimg`, refused before any container) — average build 85.9 s over 16 builds. Recomputable at any time from [`GET /verifications`](https://sorofy.site/verifications) |
+| Two real testnet contracts, hashes from the network | [`CAZAVVTM…`](https://stellar.expert/explorer/testnet/contract/CAZAVVTM3GXFNCLR66FYHJJ43MEEUV3C6PQYRQT5JVGAO2RS6S4OHRT6) (token, 8 584 B) and [`CAEA4BXA…`](https://stellar.expert/explorer/testnet/contract/CAEA4BXANQ2JQR4AF5XG53A25LU5N2QERRFC5P7ZY4W6YDQ4DGLEZRYH) (hello-world, 660 B) both `verified` through the live API against hashes **resolved via RPC**, not supplied by the caller — [roadmap](docs/testnet-roadmap.md) |
 | Tamper is caught by the hash, not by luck | One word changed in the fixture (`"Hello"` → `"Howdy"`) still compiles to **exactly 660 bytes**, and `verify-core` returns `MISMATCH` with exit code 1: `2f8a8fff…` against the expected `b68602…` |
 
 ### Differentiation (why us)
@@ -230,7 +231,7 @@ curl -X POST localhost:8080/verify -H 'Content-Type: application/json' -d '{
 This is the pre-SEP-58 / retroactive path — see [docs/day3-deploy-demo.md](docs/day3-deploy-demo.md).
 
 The build image is published at
-[`ghcr.io/erdemasik001/sorofy-build-image`](https://github.com/erdemasik001/packages/container/package/sorofy-build-image),
+[`ghcr.io/erdemasik001/sorofy-build-image`](https://github.com/users/erdemasik001/packages/container/package/sorofy-build-image),
 single-arch, so `bldimg` resolves to one manifest digest. A bare tag is refused:
 `build image must be digest-pinned (image@sha256:...)`. For local dev against an
 unpublished image, run with `SOROFY_ALLOW_UNPINNED_IMAGE=1`.
