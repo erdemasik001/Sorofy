@@ -111,7 +111,7 @@
   function iconFor(status) {
     if (status === "verified") return icon("check", "var(--ok)");
     if (status === "mismatch") return icon("x", "var(--danger)");
-    if (status === "pending") return '<span class="spin" style="display:inline-block">' + icon("spin", "var(--warn)") + "</span>";
+    if (status === "pending") return '<span class="spin">' + icon("spin", "var(--warn)") + "</span>";
     return icon("alert", "var(--ink-3)");
   }
 
@@ -197,7 +197,7 @@
     wireSearch();
 
     var list = document.getElementById("list");
-    list.innerHTML = '<div class="brut-card state"><span class="spin" style="display:inline-block">' +
+    list.innerHTML = '<div class="brut-card state"><span class="spin">' +
       icon("spin", "var(--accent)", 32) + "</span><h3>Loading…</h3></div>";
 
     get("/verifications?limit=" + PAGE + "&offset=" + offset)
@@ -259,7 +259,7 @@
       '<div class="wrap wrap--narrow"><a class="backlink" href="#/">' +
       icon("arrow", "currentColor", 15) + "Back to explorer</a><div id=\"d\"></div></div>";
     var d = document.getElementById("d");
-    d.innerHTML = '<div class="brut-card state"><span class="spin" style="display:inline-block">' +
+    d.innerHTML = '<div class="brut-card state"><span class="spin">' +
       icon("spin", "var(--accent)", 32) + "</span><h3>Loading…</h3></div>";
 
     get("/verify/" + encodeURIComponent(key))
@@ -292,7 +292,7 @@
       '<div class="brut-card-2 status-panel fade-up">' +
       '<div class="status-panel__icon">' + iconFor(row.status) + "</div>" +
       "<div><h2>" + esc(s.title) + "</h2><p>" + esc(row.status === "error" && row.error ? row.error : s.blurb) + "</p>" +
-      '<div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">' + pill(row) +
+      '<div class="status-panel__pills">' + pill(row) +
       (report.trust_level ? '<span class="brut-pill" data-tone="muted">trust: ' + esc(report.trust_level) + "</span>" : "") +
       '<span class="brut-pill" data-tone="muted">job #' + esc(row.id) + "</span></div></div></div>";
 
@@ -351,7 +351,7 @@
       '<div class="wrap wrap--narrow"><div class="section__head"><h2>Service metrics</h2></div>' +
       '<div id="m"></div></div>';
     var m = document.getElementById("m");
-    m.innerHTML = '<div class="brut-card state"><span class="spin" style="display:inline-block">' +
+    m.innerHTML = '<div class="brut-card state"><span class="spin">' +
       icon("spin", "var(--accent)", 32) + "</span><h3>Loading…</h3></div>";
 
     // Health is allowed to answer 503 (degraded), which is information rather

@@ -260,7 +260,12 @@ main { position: relative; z-index: 1; }
 @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes spin   { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .fade-up { animation: fadeUp .45s cubic-bezier(.2,.7,.2,1) both; }
-.spin    { animation: spin 1s linear infinite; transform-origin: 50% 50%; }
+/* `display` belongs here, not on the element: a transform does not apply to an
+   inline box, so the spinner needs inline-block to rotate at all. It used to be
+   set as a style attribute from app.js, which the Content-Security-Policy
+   (docs/security.md, G8) blocks — correctly, since `style-src 'self'` is what
+   makes the policy worth having. */
+.spin    { display: inline-block; animation: spin 1s linear infinite; transform-origin: 50% 50%; }
 
 @media (prefers-reduced-motion: reduce) {
   .fade-up, .spin, .hero__badge .dot, .cardgrid .vcard, .metric-tile .tdot.live { animation: none; }
@@ -543,6 +548,9 @@ main { position: relative; z-index: 1; }
 .status-panel__icon { flex: none; }
 .status-panel h2 { font-size: 22px; font-weight: 900; letter-spacing: -0.03em; margin-bottom: 6px; text-wrap: balance; }
 .status-panel p { font-size: 14px; color: var(--ink-3); line-height: 1.55; max-width: 62ch; text-wrap: pretty; }
+/* The verdict/trust/job pills under the headline. Was a style attribute built in
+   app.js; moved here so `style-src 'self'` can stay strict (docs/security.md, G8). */
+.status-panel__pills { margin-top: 14px; display: flex; gap: 8px; flex-wrap: wrap; }
 
 /* Hash comparison — the product's whole claim in one block. */
 .hashcmp { padding: 18px 20px; margin-bottom: 22px; }

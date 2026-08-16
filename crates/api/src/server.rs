@@ -919,6 +919,28 @@ mod tests {
         );
     }
 
+    /// The CSP is only worth its `style-src 'self'` while the assets stay free of
+    /// inline styles — and one can hide inside a JS string literal, which is
+    /// exactly how it got past review the first time: the markup had none, but
+    /// `app.js` built `<span class="spin" style="display:inline-block">` at
+    /// runtime and the browser blocked it. Cosmetic then; the next one might not
+    /// be, and the tempting fix is always to loosen the policy.
+    #[test]
+    fn the_explorer_assets_carry_no_inline_styles() {
+        for (name, source) in [("index.html", INDEX_HTML), ("app.js", APP_JS)] {
+            assert!(
+                !source.contains("style=\""),
+                "{name} has an inline style attribute; \
+                 move it to a class in app.css rather than relaxing style-src"
+            );
+        }
+        // Runtime styling through the CSSOM is blocked by the same directive.
+        assert!(
+            !APP_JS.contains(".style.") && !APP_JS.contains("cssText"),
+            "app.js styles an element directly; use a class instead"
+        );
+    }
+
     #[test]
     fn auth_disabled_when_no_token_configured() {
         // No configured token → open (local dev). main warns at startup.
