@@ -99,6 +99,7 @@ docker/
   build-image/     # digest-pinned build image (SEP-58 `bldimg`) + publish.sh
   api/             # runtime image for the sorofy-api service (Day3)
 docs/
+  api-reference.md              # every endpoint, schema, status code, limit + curl examples
   delivery-note.md              # one-page, non-technical summary of what shipped
   testnet-roadmap.md            # post-award roadmap: Phase 0-3, live status
   security.md                   # threat model + gap register (G1-G7), audit status
@@ -177,6 +178,9 @@ curl localhost:8080/verify/CAZAVVTM3GXFNCLR66FYHJJ43MEEUV3C6PQYRQT5JVGAO2RS6S4OH
 `GET /verify/{id|contract_id|wasm_hash}` serves the cached result: `pending` /
 `verified` / `mismatch` / `error` / `404 not_found`. SQLite-backed; results
 survive restarts.
+
+Full endpoint, schema, status-code and limit reference:
+**[docs/api-reference.md](docs/api-reference.md)**.
 
 ### Operating it
 

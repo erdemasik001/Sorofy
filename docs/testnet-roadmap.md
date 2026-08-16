@@ -131,7 +131,7 @@ does not stop on its own, so the residual hygiene items below are explicitly
 | `cargo deny` license/source policy | `cargo audit` already covers advisories, which is the security half |
 | Read-only rootfs for build containers (G6 follow-up) | Defense-in-depth on an already capability-dropped, non-root, network-less build |
 | Build-queue load test | Admission bound and rate limit are unit-tested; real load needs the live host anyway |
-| API reference / self-host guide / ops runbook | The playbook covers the operator path; the rest is polish before M3 |
+| ~~API reference~~ / self-host guide / ops runbook | **API reference done** — [api-reference.md](api-reference.md), written against the live service and verified endpoint by endpoint (it corrected two of its own claims in the process). The SOW's week-4 plan named a documented API as an output, so it left the deferred list. The playbook covers the operator path; the self-host guide and ops runbook are polish before M3 |
 
 None of these is a correctness or exposure risk on their own, and none is an M2
 deliverable. Revisit as a batch once Phase 3's gate is green — or sooner if one
@@ -300,8 +300,8 @@ Out of scope for the current target; opens once M2's gate is green:
   failing the lane; `cargo deny`'s license/source policy is still open.
 - **CI/CD evolution:** current (fmt + clippy + test) → + integration lane →
   + `cargo audit` ✅ → + deploy pipeline.
-- **Docs:** [deploy playbook](deploy-playbook.md) ✅; API reference, self-host
-  guide and ops runbook still open.
+- **Docs:** [deploy playbook](deploy-playbook.md) ✅ · [API reference](api-reference.md) ✅
+  · [delivery note](delivery-note.md) ✅; self-host guide and ops runbook still open.
 
 Funded by the SCF Contract Source Verification Service RFP — testnet tranche (M2)
 is the current target; mainnet tranche (M3) is next.
