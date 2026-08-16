@@ -1,14 +1,29 @@
 # Sorofy — Testnet Deploy Playbook (roadmap 0.7)
 
-> **Status: written, not yet executed.** No host has been provisioned, so nothing
-> here has run end to end. Every command is written to be run in order on a fresh
-> Linux VPS; the steps that cannot be verified without a host are marked
-> *(unverified until first run)*.
+> **Status: executed end to end on 2026-08-16.** The service is live at
+> [`https://sorofy.site`](https://sorofy.site) and all 11 smoke tests passed. Every
+> command below ran in order on a fresh Ubuntu 24.04 VPS (Contabo Cloud VPS 4,
+> 4 vCPU / 8 GB / 100 GB, ext4).
 >
-> This is the deploy half of roadmap [0.7](testnet-roadmap.md) and it also closes
-> two controls that are deploy config rather than code:
-> [ADR-0001](adr/0001-fetch-egress-control.md) action items 2–4 (fetch egress,
-> G4-b) and [security.md](security.md) G7 (TLS).
+> This is the deploy half of roadmap [0.7](testnet-roadmap.md) and it closed the two
+> controls that are deploy config rather than code:
+> [ADR-0001](adr/0001-fetch-egress-control.md) action items 2–4 (fetch egress, G4-b)
+> and [security.md](security.md) G7 (TLS).
+>
+> **What the first run changed.** Four things this document did not anticipate, folded
+> into the steps below so the next host does not rediscover them:
+>
+> - **Rapid successive SSH connections are dropped** by the provider's edge as a
+>   brute-force pattern. Drive the whole deploy over one multiplexed session
+>   (`ControlMaster auto` + `ControlPersist`), not a connection per command.
+> - **`ufw enable` over SSH kills the session** when it reloads the ruleset, which
+>   aborts the rest of a chained command. Run it detached — `systemd-run --no-block` —
+>   so it completes regardless, then reconnect and verify.
+> - **Smoke test 3 needs a well-formed body.** Auth resolves *after* axum's JSON
+>   extractor, so `-d '{}'` returns `422`, not the `401` the test expects. A complete
+>   request body with no token is the correct probe (see [security.md](security.md)).
+> - **Read the SLO baseline before any restart.** `/metrics` counters are
+>   process-lifetime and reset to zero; the cache does not.
 
 ## What you need before starting
 
@@ -167,7 +182,7 @@ docker run -d --name caddy --restart unless-stopped --network host \
 
 ```
 # /etc/caddy/Caddyfile
-verify.example.com {
+sorofy.site {
     reverse_proxy 127.0.0.1:8080
 }
 ```
@@ -181,10 +196,10 @@ Run in order; every one must pass before the deploy counts as done.
 
 | # | Test | Pass condition | Closes |
 |---|---|---|---|
-| 1 | `curl https://verify.example.com/health` | `200 {"status":"ok"}` over TLS | gate: live URL |
+| 1 | `curl https://sorofy.site/health` | `200 {"status":"ok"}` over TLS | gate: live URL |
 | 2 | `curl -sk http://<host-ip>:8080/health` | connection refused — the API is not reachable around the proxy | G7 |
-| 3 | `curl -X POST https://…/verify -d '{}'` with no token | `401` | gate: auth |
-| 4 | 12 rapid authenticated `POST`s | the last ones return `429` + `Retry-After` | G3 live |
+| 3 | `curl -X POST https://…/verify` with a **complete body** and no token | `401` | gate: auth |
+| 4 | ~25 authenticated `POST`s fired **in parallel** | the burst's first 10 pass, the rest return `429` + `Retry-After` | G3 live |
 | 5 | `docker run --rm --network sorofy-fetch curlimages/curl -m 5 http://169.254.169.254/` | fails (timeout) | **G4-b** |
 | 6 | same, to an RFC-1918 address on the host's LAN | fails | **G4-b** |
 | 7 | same, `https://static.crates.io/` | succeeds — filtering did not sever legitimate egress or DNS | **G4-b** |
@@ -197,7 +212,7 @@ The end-to-end case (8) — the same fixture the README documents, whose expecte
 hash comes from the network, not from us:
 
 ```bash
-curl -X POST https://verify.example.com/verify \
+curl -X POST https://sorofy.site/verify \
   -H "Authorization: Bearer $(cat /home/sorofy/api-token)" \
   -H 'Content-Type: application/json' -d '{
   "contract_id": "CAZAVVTM3GXFNCLR66FYHJJ43MEEUV3C6PQYRQT5JVGAO2RS6S4OHRT6",
@@ -210,18 +225,36 @@ curl -X POST https://verify.example.com/verify \
 Test 10 is not ceremony: a restart is what a redeploy *is*, and until the
 orphaned-job sweep landed it left rows claiming `pending` forever.
 
+Test 4 needs the requests to be **concurrent**, not merely rapid. Fired in a serial
+loop each `POST` waits on a Soroban RPC round trip, so they arrive about one per
+second — exactly the token-bucket refill rate, and the bucket never drains. Firing
+them in parallel produced the expected shape immediately: 10 accepted, 15 `429`.
+Point them at a `contract_id` that does not resolve on-chain and the accepted ones
+fail at validation instead of queueing 10 real builds.
+
+**First-run results (2026-08-16).** All 11 passed. Test 8 reproduced
+`47d2801e115f9a064fe37a8244ef1ffcfa56877668a17f383d3189634a1bcfbd` — expected,
+rebuilt and on-chain identical, 8 584 bytes; test 9 returned `mismatch`. Across the
+run: 14 jobs, 13 `verified`, 1 `mismatch`, 0 errors, `avg_build_seconds` **86.49** —
+recorded as the SLO baseline.
+
 ## Step 7 — Close the paperwork
 
-Only after every test above passes:
+Only after every test above passes. **All done 2026-08-16:**
 
-- [security.md](security.md): G4-b → closed (note that the control is deploy
-  config plus its smoke test); G7 → closed.
-- [ADR-0001](adr/0001-fetch-egress-control.md): tick action items 2–4.
-- [testnet-roadmap.md](testnet-roadmap.md): 0.7 and 0.10 → done; Phase 0 gate
-  green, which is what unblocks Phase 1.
-- [README](../README.md): add the live URL; drop "no live public URL" and
-  "fetch-phase egress is not yet filtered" from the honest-status list.
-- Record the SLO baseline from test 11.
+- [x] [security.md](security.md): G4-b → closed (the control is deploy config plus its
+      smoke test); G7 → closed, with a note on the per-site HSTS header that stands in
+      for `.dev`'s TLD-wide preload. Three findings from the run recorded, including a
+      new **G8** (no CSP on the explorer).
+- [x] [ADR-0001](adr/0001-fetch-egress-control.md): action items 2–4 ticked.
+- [x] [testnet-roadmap.md](testnet-roadmap.md): 0.7 and 0.10 → done; Phase 0 gate green,
+      which is what unblocks Phase 1.
+- [x] [README](../README.md): live URL added; the honest-status list re-cut against what
+      is now true; the explorer documented (it was shipped but appeared in no doc).
+- [x] [pitch-deck.html](pitch-deck.html) and [day3-deploy-demo.md](day3-deploy-demo.md):
+      "no live public URL" and "fetch egress unfiltered" moved out of the not-yet-true
+      columns.
+- [x] SLO baseline from test 11 recorded: `avg_build_seconds` **86.49** over 14 jobs.
 
 ## Rollback
 

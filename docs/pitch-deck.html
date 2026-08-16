@@ -567,15 +567,16 @@
             <li><b>Hardened sandbox</b> — mem/CPU/PID/swap caps, <code>--cap-drop=ALL</code>, <code>no-new-privileges</code>, SSRF guard re-validating every redirect hop</li>
             <li><b>Operable</b> — <code>/health</code>, <code>/metrics</code>, structured logs, schema migrations, cache snapshots</li>
             <li><b>Proven in CI</b> — the real Docker/RPC reproduction suite runs on every merge, not just by hand</li>
+            <li><b>Live on testnet</b> — <code>https://sorofy.site</code>, TLS-terminated, API on loopback only; 13 verified + 1 deliberate mismatch, 0 errors, avg build 86.5&nbsp;s</li>
+            <li><b>Filtered fetch egress</b> — the host firewall now drops the fetch network to every internal range, reinstalled on boot and verified live (metadata and RFC-1918 blocked, crates.io reachable)</li>
           </ul>
         </div>
         <div class="col col--deferred">
           <p class="col__h">Not yet true</p>
           <ul>
-            <li><b>No live public URL</b> — needs a reachable Docker daemon (Fly.io now wants a card + ~$5/mo); the VPS path is one <code>docker run</code> away. The last Phase 0 item.</li>
-            <li><b>Fetch-phase egress unfiltered</b> — the code seam is in (<code>VERIFY_FETCH_NETWORK</code>); the host firewall rules that give it teeth land with the deploy</li>
             <li><b>trust_level hardcoded <code>arbitrary</code></b> — the allowlist / multi-verifier surface (M2) is where the other tiers come from</li>
             <li><b>Single verifier</b> — decentralization is architected for, not yet built</li>
+            <li><b>No CSP on the explorer</b> — output escaping is tested and holds; the header layer behind it is not there yet (G8)</li>
           </ul>
         </div>
       </div>

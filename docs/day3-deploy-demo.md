@@ -154,9 +154,17 @@ Exact commands live in the README "The API" section. The recording itself
 
 ## Still not true (post-MVP, brief M2/M3)
 
-- **No live public URL** — deploy deferred (cost + DinD), artifacts ready.
-- **No auth / rate limiting** — mandatory before exposing the socket-mounted
-  service publicly. First item on the deploy hardening list.
+> **Read as of Day3.** This is the MVP build log, kept as written. The first two
+> items below have since been delivered: the service is live at
+> [`https://sorofy.site`](https://sorofy.site) with bearer-token auth and rate
+> limiting, as of the 2026-08-16 deploy. Current status lives in
+> [testnet-roadmap.md](testnet-roadmap.md); the gap register in
+> [security.md](security.md).
+
+- ~~**No live public URL**~~ — deploy deferred (cost + DinD), artifacts ready.
+  **Done 2026-08-16** on a VPS, per the [deploy playbook](deploy-playbook.md).
+- ~~**No auth / rate limiting**~~ — mandatory before exposing the socket-mounted
+  service publicly. First item on the deploy hardening list. **Done** (G2, G3).
 - **`trust_level` hardcoded `arbitrary`** — the allowlist / multi-verifier
   surface (brief M2) is where `publicly-auditable` / `sdf-maintained` come from.
 - **Single verifier** — decentralization (independent verifiers publishing and

@@ -177,10 +177,11 @@ cannot be reached around the proxy — both in the
 | **G1** | No memory/CPU/PID/disk limits on the build container | High | Sandbox hardening (`3541656` + follow-up) — **done**: mem/CPU/PID/swap ✅; disk quota wired (`--storage-opt size=`), opt-in per storage driver (see status update) |
 | **G2** | No auth on `POST /verify` | High | Phase 0.2 |
 | **G3** | No rate limit / unbounded job queue | High | Phase 0.3 — **done**: bounded admission queue ✅ (G3-a) + per-principal token-bucket rate limit ✅ (G3-b) |
-| **G4** | SSRF via submitter-supplied source URI / repo | Med-High | Sandbox hardening (`3541656` + follow-up) — **partially done**: host-fetch guard ✅, redirect-hop re-validation ✅ (G4-a); in-container `cargo fetch` egress ✗ (G4-b, see status update) |
+| **G4** | SSRF via submitter-supplied source URI / repo | Med-High | Sandbox hardening (`3541656` + follow-up) — **done**: host-fetch guard ✅, redirect-hop re-validation ✅ (G4-a); in-container `cargo fetch` egress ✅ (G4-b, closed at deploy — see status update) |
 | **G5** | Socket mount = host root (tenancy) | Med | Accepted single-tenant; rootless/proxy tracked for post-M2 |
 | **G6** | No `--cap-drop=ALL` / `--security-opt=no-new-privileges` on the build container | Med | Container hardening — **done**: both flags set on fetch+build via `SecurityOpts` (see status update) |
-| **G7** | No TLS — the bearer token that gates `POST /verify` travels in cleartext | High | Deploy config: TLS-terminating reverse proxy + loopback-only publish (Phase 0.7, see status update) |
+| **G7** | No TLS — the bearer token that gates `POST /verify` travels in cleartext | High | **Done**: TLS-terminating reverse proxy + loopback-only publish, live since the 0.7 deploy (see status update) |
+| **G8** | No response security headers (CSP / nosniff / frame-ancestors) on the browsable explorer, which renders attacker-supplied build logs | Low | Open — defense-in-depth behind the escaping that already works (S8, see 0.7 deploy findings) |
 
 ## Residual risk & decisions
 
@@ -225,7 +226,7 @@ and build containers. Both residuals from the retrospective review are addressed
   use the driver-independent size-bounded volume/tmpfs. The code path and its tests
   are in place, so activating the quota is a one-line deploy toggle, not new work.
 
-### G4 — SSRF egress control: partially closed
+### G4 — SSRF egress control: closed
 Delivered and unit-tested (`source.rs` `guard_public_url`/`is_internal`): the
 submitted host is resolved and loopback/link-local/RFC-1918/CGNAT/IPv4-mapped are
 refused, on both the git and archive paths. Documented residual: DNS-rebinding
@@ -244,7 +245,7 @@ TOCTOU. **Undocumented residuals found in review:**
   which re-validates instead of refusing). Unit-tested: `resolve_redirect` handles
   absolute/relative targets, and a `302 → 169.254.169.254` target is refused by the
   per-hop guard.
-- **In-container `cargo fetch` egress is unguarded (G4-b, still open).** `guard_public_url` covers only
+- **In-container `cargo fetch` egress (G4-b) — closed at the 0.7 deploy.** `guard_public_url` covers only
   the API host's own fetch. The fetch container runs `Network::Bridge`
   (`reproduce.rs`), and `cargo fetch` dials whatever git/registry hosts the
   attacker-controlled `Cargo.toml`/`Cargo.lock` name — internal addresses and the
@@ -262,10 +263,23 @@ TOCTOU. **Undocumented residuals found in review:**
   network (subnet `172.18.0.0/16`) produced the correct on-chain hash, and the default
   path is unchanged. Deliberately opt-in and non-auto-creating: a network that does not
   exist fails the run loudly, and silently creating one would give *unfiltered* egress
-  under a name implying filtering. **Still open:** the control that gives it meaning —
-  host firewall rules dropping that subnet to internal ranges, plus the deploy smoke
-  test — is deploy config (roadmap 0.7). Until those rules exist, fetch egress is
-  unfiltered.
+  under a name implying filtering.
+
+  **Control installed and verified (ADR action items 2–3), 2026-08-16.** The testnet
+  host runs `sorofy-fetch` on `172.28.0.0/16` with bridge `sorofy-fetch0`, and
+  `/usr/local/sbin/sorofy-egress.sh` installs the `DOCKER-USER` DROP rules for
+  `169.254.0.0/16`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `127.0.0.0/8` and
+  `100.64.0.0/10`, plus an `INPUT -i sorofy-fetch0 -j DROP` for traffic aimed at the
+  host itself (which arrives on INPUT, never on FORWARD, so `DOCKER-USER` would never
+  see it). The script is `-C`-guarded per rule, so re-running never duplicates, and
+  `sorofy-egress.service` re-applies it after `docker.service` on every boot — a
+  control that does not survive a reboot is not a control, and `iptables-persistent`
+  cannot do this because `dockerd` creates the chain.
+
+  Verified live from the fetch network itself: `169.254.169.254` (metadata) and an
+  RFC-1918 address both fail, while `index.crates.io/config.json`, `github.com` and the
+  fixture's codeload tarball all return `200` — the filter closes the modelled threat
+  without severing the egress or DNS a real build needs. **Fetch egress is filtered.**
 
 ### G6 — container hardening: closed
 The build/fetch containers run non-root (good) under the daemon's default seccomp
@@ -281,7 +295,7 @@ Read-only rootfs (+ tmpfs for the writable paths) remains a further follow-up; i
 would slot into the same `SecurityOpts`. Severity was Medium — defense-in-depth;
 no known active escape either before or after.
 
-### G7 — transport security: open, closes with the deploy
+### G7 — transport security: closed at the 0.7 deploy
 Surfaced by the Phase 0.7 deploy review, not by the sandbox audit: the model had
 covered *who* may call `POST /verify` (G2) and *how often* (G3) but never *how the
 credential reaches us*. Nothing in the code or the artifacts terminates TLS, so a
@@ -289,11 +303,28 @@ naive `docker run -p 8080:8080` would publish an authenticated endpoint in
 cleartext — and, because Docker writes its own iptables rules, would do so past a
 `ufw` that appears to have the port closed.
 
-Both halves are deploy config and land with 0.7, specified in the
+Both halves are deploy config and landed with 0.7, specified in the
 [deploy playbook](deploy-playbook.md): a TLS-terminating reverse proxy in front,
-and `-p 127.0.0.1:8080:8080` so the API is reachable only through it. Flip this to
-closed when the live URL serves HTTPS and a plain-HTTP request to the host is
-refused.
+and `-p 127.0.0.1:8080:8080` so the API is reachable only through it.
+
+**Closed 2026-08-16.** `https://sorofy.site` serves HTTP/2 with a Let's Encrypt
+certificate obtained by Caddy (tls-alpn-01), and `http://<host-ip>:8080/health`
+is refused from off-host — the API is published on loopback only, so there is no
+path around the proxy.
+
+One addition the playbook did not anticipate. The domain is a `.site`, not the
+`.dev` that was first considered, and `.dev` is HSTS-preloaded for the whole TLD —
+browsers refuse plain HTTP to it before a single request leaves. `.site` carries no
+such guarantee, so the Caddyfile asserts it per-site instead:
+
+```
+header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+```
+
+That covers the half of G7 the proxy alone does not: a *browser* client that types
+the bare host will not attempt cleartext after its first visit. It does nothing for
+`curl` or a script, which is why the loopback publish — not the header — remains the
+control that actually closes G7.
 
 ### Confirmed-good in the same review (not regressions — recorded so they are not re-touched)
 These were checked and are correct; do **not** "fix" them:
@@ -317,3 +348,58 @@ both the fetch and build containers (Docker 29.6.2 via WSL2). A daemon that reje
 flag would fail `docker create`; the exact-hash match proves the hardening does not
 perturb the build. Disk quota (`--storage-opt size=`) stays off in `BUILD_LIMITS` per the
 G1 note and so is not exercised here.
+
+---
+
+## Status update — findings from the 0.7 deploy (2026-08-16)
+
+> Recorded while running the [deploy playbook](deploy-playbook.md) end to end against
+> the live testnet host for the first time. G4-b and G7 closed (above); these are the
+> three things the run surfaced that the model did not already hold.
+
+### S8 — the browsable explorer is an attack surface the model never covered *(new)*
+
+The threat model was written when the only interface was JSON over `curl`. The service
+now also serves a browsable UI at `GET /` (content-negotiated on `Accept`), and that
+page renders **attacker-supplied content**: contract ids, source URIs, and above all the
+build log, which is the output of compiling code we did not write.
+
+The primary defense is in place and was tested when the UI landed: every interpolation
+goes through `esc()` and the log is written with `textContent`, verified by seeding a row
+with script tags and event handlers in every rendered field. That is the control that
+matters, and it holds.
+
+**Gap G8 — no response security headers.** Defense-in-depth is missing: the page is
+served with no `Content-Security-Policy`, `X-Content-Type-Options: nosniff`, or
+`X-Frame-Options`/`frame-ancestors`. A CSP in particular would turn any future escaping
+slip from "script executes" into "script blocked", which is exactly the margin worth
+having on a page whose content originates with strangers. Severity is Low — it is a
+second layer behind a working first one — and the fix belongs with the assets, which are
+compiled into the binary, so it is a code change rather than deploy config. Note that
+`Strict-Transport-Security` *is* now set (see G7), but that is a transport control, not
+a content one.
+
+### Auth runs after the JSON extractor, not before *(low)*
+
+`POST /verify` is correctly gated: a well-formed request with no token returns
+`401 missing or invalid bearer token`, verified live. But axum resolves the `Json<T>`
+extractor before the auth check, so an **unauthenticated** caller gets `422` with the
+deserializer's message (`missing field bldimg`) or `415` on a bad content type, rather
+than `401`.
+
+This is not an auth bypass — no job can be created, no build spawned, no state changed.
+It is (a) a small information disclosure, leaking request-schema field names to
+unauthenticated callers, though those names are already published in the README, and
+(b) a small unauthenticated work surface, bounded by axum's default body limit. The fix
+is to order the auth layer ahead of the body extractor. Worth noting because the deploy
+playbook's smoke test 3 expects `401` and will read as a failure against an empty body;
+the test should send a well-formed body.
+
+### `/metrics` counters are process-lifetime, not persisted *(informational)*
+
+`docker restart sorofy-api` leaves the SQLite cache intact — results survive, and no row
+is stranded `pending` (smoke test 10). The counters behind `GET /metrics` do not: they
+reset to zero. This is the conventional shape for process counters and a scraper handles
+it, but it has one practical consequence recorded here so it is not rediscovered: the
+**SLO baseline must be read before a restart, not after**. The 0.7 baseline
+(`avg_build_seconds` 86.49 over 14 jobs) was captured accordingly.

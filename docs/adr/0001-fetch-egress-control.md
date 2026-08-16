@@ -1,6 +1,6 @@
 # ADR-0001: Egress control for the in-container `cargo fetch` phase (G4-b)
 
-**Status:** Accepted — code seam implemented; firewall rules pending deploy (0.7)
+**Status:** Accepted — implemented and verified live (code seam + firewall rules, 2026-08-16)
 **Date:** 2026-07-31
 **Deciders:** Sorofy maintainer/operator (single-tenant testnet)
 **Related:** [`docs/security.md`](../security.md) G4 · roadmap item 0.10 · [`reproduce.rs`](../../crates/verifier-core/src/reproduce.rs)
@@ -166,11 +166,19 @@ fetch network is exactly where a proxy would be injected for multi-tenant/M2).
        `sorofy-fetch` network, with the default path confirmed unchanged. Opt-in rather than
        defaulted: the network must be pre-created (and firewalled) by deploy, and a missing
        one fails loudly instead of silently falling back to unfiltered egress.
-2. [ ] **Deploy (0.7):** create the `sorofy-fetch` network and install `DOCKER-USER` DROP rules
-       for internal ranges targeting its subnet; document in the deploy playbook.
-3. [ ] **Verification:** add a deploy smoke test — from the fetch network, a connection to
-       `169.254.169.254` and an RFC-1918 address must fail; a crates.io fetch must succeed.
-4. [ ] **Docs:** flip G4-b in [`security.md`](../security.md) to closed once 1–3 land; note the
-       control is deploy-config (not pure code) and its smoke test.
+2. [x] **Deploy (0.7):** done 2026-08-16 on the testnet host. `sorofy-fetch` runs on
+       `172.28.0.0/16` with bridge `sorofy-fetch0`; `/usr/local/sbin/sorofy-egress.sh`
+       installs `DOCKER-USER` DROP rules for `169.254.0.0/16`, `10.0.0.0/8`,
+       `172.16.0.0/12`, `192.168.0.0/16`, `127.0.0.0/8`, `100.64.0.0/10`, plus
+       `INPUT -i sorofy-fetch0 -j DROP` for traffic aimed at the host itself. Each rule is
+       `-C`-guarded so re-running never duplicates, and `sorofy-egress.service` re-applies
+       it `After=docker.service` on every boot — `iptables-persistent` cannot, because
+       `dockerd` creates the chain after it would have restored.
+3. [x] **Verification:** run live from the fetch network. `169.254.169.254` and an
+       RFC-1918 address both fail; `index.crates.io/config.json`, `github.com` and the
+       fixture's codeload tarball all return `200`. Recorded as smoke tests 5–7 in the
+       [deploy playbook](../deploy-playbook.md).
+4. [x] **Docs:** G4-b flipped to closed in [`security.md`](../security.md), noting that the
+       control is deploy config plus its smoke test rather than pure code.
 5. [ ] **Backlog (M2):** revisit Option B (allowlist proxy on the `sorofy-fetch` seam) for the
        multi-tenant posture.

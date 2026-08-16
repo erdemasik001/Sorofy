@@ -2,18 +2,26 @@
 
 An open-source, multi-verifier source verification service that proves a Soroban smart contract's on-chain WASM bytes were built from the public source code shown on explorers.
 
-> **Status: the MVP was awarded by the SCF; work has resumed on turning it into a
-> testnet-grade product.** The engine reproduces a real testnet contract byte-for-byte
-> against its on-chain hash, the retroactive path is proven, and the build image is
-> published to GHCR with digest enforcement on. Since the award, the service has gained
-> bearer-token auth, rate limiting + a bounded job queue, `/health` + `/metrics` +
-> structured request logs, schema migrations + cache snapshots, a sandbox hardened against
-> the findings of a security review, and a CI lane that runs the real Docker/RPC tests.
-> **What's left before a public testnet URL is the deploy itself** (see
-> [honest status](#roadmap--what-happens-next)). Roadmap:
-> [docs/testnet-roadmap.md](docs/testnet-roadmap.md) · threat model:
-> [docs/security.md](docs/security.md) · MVP build log: [PLAN.md](PLAN.md) · full brief:
-> [idea1-project-brief.md](idea1-project-brief.md).
+> ## 🟢 Live on testnet: **[https://sorofy.site](https://sorofy.site)**
+>
+> Open it in a browser for the explorer, or `curl` it for JSON — the same URL serves both.
+> A verified contract, expected and rebuilt hash side by side:
+> [`CAZAVVTM…`](https://sorofy.site/verify/CAZAVVTM3GXFNCLR66FYHJJ43MEEUV3C6PQYRQT5JVGAO2RS6S4OHRT6)
+>
+> **Status: the MVP was awarded by the SCF; it is now deployed as a testnet-grade
+> service.** The engine reproduces a real testnet contract byte-for-byte against its
+> on-chain hash, the retroactive path is proven, and the build image is published to GHCR
+> with digest enforcement on. Since the award the service has gained bearer-token auth,
+> rate limiting + a bounded job queue, `/health` + `/metrics` + structured request logs,
+> schema migrations + cache snapshots, a sandbox hardened against the findings of a
+> security review, a browsable explorer over the cache, and a CI lane that runs the real
+> Docker/RPC tests. The 2026-08-16 deploy closed the last two open controls — filtered
+> fetch egress (G4-b) and TLS (G7) — and took Phase 0's quality gate green.
+>
+> Roadmap and live status: [docs/testnet-roadmap.md](docs/testnet-roadmap.md) · threat
+> model and gap register: [docs/security.md](docs/security.md) · deploy playbook:
+> [docs/deploy-playbook.md](docs/deploy-playbook.md) · MVP build log: [PLAN.md](PLAN.md) ·
+> full brief: [idea1-project-brief.md](idea1-project-brief.md).
 
 ## Problem
 
@@ -46,7 +54,8 @@ flowchart TD
 ## What the service does today
 
 - Verification flow: source (git repo/commit **or** SEP-58 `source_uri` archive) → deterministic, network-isolated Docker rebuild → sha256 compare against the on-chain hash
-- REST API: `POST /verify` (bearer-token auth, rate-limited, bounded queue), `GET /verify/{id|contract_id|wasm_hash}`, plus `GET /health` and `GET /metrics`
+- REST API: `POST /verify` (bearer-token auth, rate-limited, bounded queue), `GET /verify/{id|contract_id|wasm_hash}`, `GET /verifications` (newest-first page), plus `GET /health` and `GET /metrics`
+- A browsable **explorer** over the cache at `GET /`, which content-negotiates on `Accept`: a browser gets the UI, `curl` gets the endpoint listing as JSON. Page, stylesheet, script and fonts are compiled into the binary with `include_str!` — no build step and nothing fetched at runtime, so it works on a host with no egress
 - SQLite result cache with versioned schema migrations and `VACUUM INTO` snapshots — results survive restarts and upgrades
 - On-chain WASM hash resolved from Soroban RPC — the caller cannot assert the target
 - Sandbox: `--network=none` build, non-root, no bind mounts, memory/CPU/PID/swap caps, `--cap-drop=ALL`, `no-new-privileges`, SSRF-guarded source fetch ([docs/security.md](docs/security.md))
@@ -64,6 +73,8 @@ flowchart TD
 | Real `bldimg` digest | Image published to GHCR (single-arch, `sha256:cff44167…`); digest enforcement on by default — bare tags rejected before any container — [day3](docs/day3-deploy-demo.md) |
 | Hardening doesn't break the build | The same fixture still reproduces byte-for-byte with the swap/capability/privilege caps applied and the fetch phase pinned to a dedicated network — [security.md](docs/security.md) |
 | Tested in CI, not just locally | The `#[ignore]`d suite — 6 reproduction cases (real containers) + live RPC lookups — runs on merges to `master` via [`integration.yml`](.github/workflows/integration.yml) |
+| Live, not just deployable | [`https://sorofy.site`](https://sorofy.site) serves the result of a real rebuild run on that host: 13 `verified`, 1 deliberate `mismatch`, 0 errors across 14 jobs, average build 86.5 s — [roadmap 0.7](docs/testnet-roadmap.md) |
+| Tamper is caught by the hash, not by luck | One word changed in the fixture (`"Hello"` → `"Howdy"`) still compiles to **exactly 660 bytes**, and `verify-core` returns `MISMATCH` with exit code 1: `2f8a8fff…` against the expected `b68602…` |
 
 ### Differentiation (why us)
 
@@ -83,10 +94,12 @@ Rust, Axum, Docker, Soroban RPC, `stellar-cli`.
 crates/
   verifier-core/   # SEP-58 reproduction pipeline + `verify-core` CLI (Day1)
   api/             # public REST API — Axum server, cache, on-chain lookup (Day2)
+    static/        # the explorer UI, compiled into the binary (no build step, no CDN)
 docker/
   build-image/     # digest-pinned build image (SEP-58 `bldimg`) + publish.sh
   api/             # runtime image for the sorofy-api service (Day3)
 docs/
+  delivery-note.md              # one-page, non-technical summary of what shipped
   testnet-roadmap.md            # post-award roadmap: Phase 0-3, live status
   security.md                   # threat model + gap register (G1-G7), audit status
   deploy-playbook.md            # step-by-step testnet deploy: egress filter, TLS, smoke tests
@@ -251,13 +264,21 @@ shells into WSL automatically — override with `VERIFY_DOCKER="wsl -d Ubuntu --
 ## Roadmap — what happens next
 
 The MVP proved the core claim (source → on-chain bytecode, including the retroactive case) and
-was awarded by the SCF. Work since then has been **Phase 0: making it deployable to testnet** —
-the security, auth, and operability work a socket-mounted service needs before it faces the
-internet. Live status: [docs/testnet-roadmap.md](docs/testnet-roadmap.md). Full pitch:
+was awarded by the SCF. Work since then was **Phase 0: making it deployable to testnet** — the
+security, auth, and operability work a socket-mounted service needs before it faces the
+internet. **Phase 0's quality gate is green as of 2026-08-16 and the service is live.** Live
+status: [docs/testnet-roadmap.md](docs/testnet-roadmap.md). Full pitch:
 [docs/pitch-deck.html](docs/pitch-deck.html).
 
 **Done since the award (Phase 0).** Each closes a gap from the threat model in
 [docs/security.md](docs/security.md):
+
+- **Deployed** — live at [`https://sorofy.site`](https://sorofy.site) on a single-tenant VPS,
+  Docker-out-of-Docker over the host socket, Caddy terminating TLS with a Let's Encrypt
+  certificate and the API published on loopback only, so nothing reaches it around the proxy
+  (G7). Fetch containers run on a dedicated network whose egress to internal ranges is dropped
+  in `DOCKER-USER`, reinstalled on every boot and verified live (G4-b). All 11 playbook smoke
+  tests pass; SLO baseline `avg_build_seconds` 86.49.
 
 - **Auth** — bearer token on `POST /verify`, constant-time compared; `GET` stays public (G2).
 - **Rate limiting + bounded queue** — per-principal token bucket and a cap on outstanding jobs;

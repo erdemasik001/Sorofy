@@ -34,9 +34,9 @@ It funds exactly three deliverables, and its out-of-scope list is explicit:
 
 | SOW deliverable | Status | What is missing |
 |---|---|---|
-| **1. Deterministic build engine** (`verify-core` CLI, digest-pinned image, sha256 vs on-chain) | ✅ Built | Evidence only: a screenshot of a CLI run showing `verified` and a `mismatch` on altered source |
-| **2. Public REST API, **live on testnet**, cached, `trust_level` in the schema | ⚠️ **Half** — the API is built and tested; it is **not deployed** | The live URL (roadmap 0.7), 2–3 real contracts verified through it, and a screenshot of a `GET` returning JSON |
-| **3. Retroactive path** (source + vetted `bldimg` out-of-band, ≥1 real pre-SEP-58 contract) | ✅ Proven (day3) | Evidence only: a demo recording plus the contract id |
+| **1. Deterministic build engine** (`verify-core` CLI, digest-pinned image, sha256 vs on-chain) | ✅ Built **and run on the live host** — `VERIFIED` (exit 0) on the fixture, `MISMATCH` (exit 1) on a one-word source change | A screenshot of those two runs |
+| **2. Public REST API, **live on testnet**, cached, `trust_level` in the schema | ✅ **Live** at [`https://sorofy.site`](https://sorofy.site) — 13 contracts verified through it, `trust_level` in the response | A screenshot of a `GET` returning JSON |
+| **3. Retroactive path** (source + vetted `bldimg` out-of-band, ≥1 real pre-SEP-58 contract) | ✅ Proven (day3) | A demo recording plus the contract id |
 
 **Explicitly out of SOW scope:** multi-verifier/decentralisation ("architected and
 documented as the next milestone"), mainnet + audit, explorer/wallet UI, an
@@ -45,9 +45,13 @@ on-chain registry contract, and guaranteed determinism across all contracts.
 **Consequence for this roadmap.** Phases 1–3 below are *next-milestone* work, not
 funded deliverables — Phase 3 is on the SOW's out-of-scope list by name, and
 Phase 2 goes far past deliverable 3, which needs one contract verified, not a
-registry with a submission and moderation flow. The only funded item still open
-is **0.7 (deploy) plus the three evidence artifacts**. Everything else in this
-document is post-SOW.
+registry with a submission and moderation flow. Everything else in this document is
+post-SOW.
+
+**Status 2026-08-16:** 0.7 shipped and the service is live, so all three funded
+deliverables are *built and running*. What is left of the SOW is **evidence capture** —
+two screenshots, a demo recording, and a one-page delivery note — plus the
+`demo.ps1` parameterisation that lets the recording target the live service.
 
 ### Delivery plan
 
@@ -57,21 +61,21 @@ own right, not paperwork: the SOW is signed off by the Ambassador Chapter Lead
 and says the proof must be reviewable "with minimal technical expertise", so a
 live URL and a recording carry more weight at sign-off than any amount of code.
 
-| Block | Work | Needs a host? |
+| Block | Work | Status |
 |---|---|---|
-| **A — Evidence that needs nothing** | A1 screenshot of a `verify-core` run showing `verified` and, on altered source, `mismatch` (deliverable 1, complete after this) · A2 parameterise [`scripts/demo.ps1`](../scripts/demo.ps1), whose API URL is currently hardcoded to localhost, so the recording can run against the live service · A3 a one-page delivery note aimed at a non-technical reviewer | No |
-| **B — Deploy** | The [playbook](deploy-playbook.md) end to end: host baseline → fetch network + egress rules → image → run → TLS → the 11 smoke tests. Smoke tests 8–9 (fixture `verified`, tampered → `mismatch`) *are* the deliverable-2 evidence, not extra work | Yes |
-| **C — Evidence on the live service** | C1 screenshot of `GET /verify/{id}` returning JSON with `status` and `trust_level` · C2 verify 2–3 real testnet contracts through the live API · C3 record the demo (retroactive verify, then tamper → `mismatch`) | Yes |
-| **D — Close the paperwork** | Playbook step 7: live URL into the README, G4-b + G7 closed, ADR action items 2–4 ticked, 0.7 done | Yes |
+| **A — Evidence that needs nothing** | A1 `verify-core` showing `verified` and, on altered source, `mismatch` · A2 parameterise [`scripts/demo.ps1`](../scripts/demo.ps1), whose API URL was hardcoded to localhost, so the recording can run against the live service · A3 a one-page delivery note aimed at a non-technical reviewer | A1 ✅ run · A2 ⬜ · A3 ✅ [delivery-note.md](delivery-note.md) |
+| **B — Deploy** | The [playbook](deploy-playbook.md) end to end: host baseline → fetch network + egress rules → image → run → TLS → the 11 smoke tests | ✅ **Done 2026-08-16**, 11/11 passed |
+| **C — Evidence on the live service** | C1 screenshot of `GET /verify/{id}` returning JSON with `status` and `trust_level` · C2 verify 2–3 real testnet contracts through the live API · C3 record the demo (retroactive verify, then tamper → `mismatch`) | C2 ✅ · C1 ⬜ · C3 ⬜ |
+| **D — Close the paperwork** | Playbook step 7: live URL into the README, G4-b + G7 closed, ADR action items 2–4 ticked, 0.7 done | ✅ Done |
 
-**Contract inventory for C2:** two are ready — `CAZAVVTM…` (the ~40 KB real-size
-token) and the hello-world fixture (660 B). The SOW asks for 2–3, so a third is
-optional; it would mean deploying another `soroban-examples` contract to testnet.
+**Contract inventory for C2:** both are verified through the live service —
+`CAZAVVTM…` (the real-size token, reproduced against its RPC-resolved hash) and the
+hello-world fixture (660 B, used for the tamper case). The SOW asks for 2–3; a third
+would mean deploying another `soroban-examples` contract to testnet.
 
-**Estimate:** ~1.5–2 working days total, of which block A (~half a day) can be
-done before a host exists. The playbook has never been executed, so budget first-run
-friction; and point the domain's DNS at the host early, since the TLS step cannot
-issue a certificate before it resolves.
+**What remains is evidence capture, not engineering:** A2 (a PowerShell edit), A3 (a
+page of prose), and the two screenshots plus the recording. Every claim they document
+is already true and reproducible against the live URL.
 
 ## Definition of "flawless" (the bar every phase is held to)
 
@@ -109,6 +113,12 @@ phase's quality gate is green.
 >
 > Phases 2 and 3 inherit this exception; 0.7 stays the gate for *going live*, not
 > for *building*.
+>
+> **Resolved 2026-08-16.** 0.7 shipped, G4-b and G7 are closed, and the Phase 0 gate
+> is green — the service is live at [`https://sorofy.site`](https://sorofy.site). The
+> exception is moot: there is no longer an unhardened service to pile features onto,
+> and Phase 1 no longer has to wait for anything. Kept as the record of a decision,
+> not as live guidance.
 
 **Scope discipline (2026-08-03).** Phase 0 grew from 8 items to 10 plus
 sub-items, each addition individually justified by a real finding. That pattern
@@ -144,19 +154,28 @@ public exposure.
 - [x] **0.4 Observability** — `GET /health` (liveness + db ping), `GET /metrics` (job counters), structured per-request logs
 - [x] **0.5 Persistence hardening** — versioned schema migrations (`user_version`, forward-only, downgrade-refusing) + `VACUUM INTO` snapshots, optionally periodic via `SOROFY_BACKUP_DIR`
 - [x] **0.6 Integration test lane** — `integration.yml` runs the `#[ignore]`d Docker/RPC tests (push:master + manual); `extract_wasm` selection split into offline-testable `select_wasm_from_tar`
-- [ ] **0.7 Deploy to testnet host** — VPS + Docker-out-of-Docker, live URL.
-  *Prepared:* a step-by-step [deploy playbook](deploy-playbook.md) (host baseline,
-  egress-filtered fetch network, TLS proxy, smoke tests, rollback); the API image
-  now builds `--locked`; the service shuts down gracefully and reconciles jobs
-  orphaned by a restart; the missing transport-security control is modelled (G7).
-  *Remaining:* a host. Everything still open here is execution, not design
+- [x] **0.7 Deploy to testnet host** — **live at [`https://sorofy.site`](https://sorofy.site)**
+  (2026-08-16). Contabo Cloud VPS 4 (4 vCPU / 8 GB / 100 GB, Ubuntu 24.04, ext4),
+  Docker-out-of-Docker over the host socket, Caddy terminating TLS with a Let's Encrypt
+  certificate, API published on loopback only. The [playbook](deploy-playbook.md) ran end
+  to end and all 11 smoke tests passed; SLO baseline `avg_build_seconds` **86.49** over 14
+  jobs (13 `verified`, 1 deliberate `mismatch`, 0 errors)
 - [x] **0.8 Narrative update** — README + pitch deck reflect the post-award posture: what Phase 0 delivered, and an honest "not yet true" list (deploy, fetch egress, trust levels, single verifier)
 - [x] **0.9 Sandbox hardening** — build resource limits (G1) + SSRF guard (G4), surfaced by 0.1 (commit `3541656`)
-- [ ] **0.10 Sandbox hardening completion (retrospective)** — G1 disk quota + `--memory-swap` ✅, G6 `--cap-drop=ALL`/`no-new-privileges` ✅, G4-a per-hop redirect re-validation ✅, G4-b fetch-egress **code seam** ✅ (`VERIFY_FETCH_NETWORK`); remaining: G4-b host firewall rules + smoke test, which land with 0.7 ([ADR-0001](adr/0001-fetch-egress-control.md))
+- [x] **0.10 Sandbox hardening completion (retrospective)** — G1 disk quota + `--memory-swap` ✅, G6 `--cap-drop=ALL`/`no-new-privileges` ✅, G4-a per-hop redirect re-validation ✅, G4-b fetch-egress code seam ✅ (`VERIFY_FETCH_NETWORK`) **and its host firewall rules + smoke test ✅**, installed by `sorofy-egress.service` and verified live from the fetch network — metadata and RFC-1918 blocked, crates.io and GitHub reachable ([ADR-0001](adr/0001-fetch-egress-control.md))
 
-**🚦 Phase 0 quality gate:** live testnet URL responds · unauthenticated `POST`
-returns 401 · security pass documented · integration lane green in CI · SLO
-baseline captured.
+**🚦 Phase 0 quality gate — GREEN (2026-08-16).** Live testnet URL responds
+(`https://sorofy.site/health` over HTTP/2 + Let's Encrypt) · unauthenticated `POST`
+returns 401 · security pass documented ([security.md](security.md), G4-b and G7 closed at
+this deploy) · integration lane green in CI · SLO baseline captured
+(`avg_build_seconds` 86.49).
+
+The deploy also surfaced three items, none of them gate blockers, all recorded in
+[security.md](security.md): a new **G8** (no CSP/nosniff/frame-ancestors on the browsable
+explorer — defense-in-depth behind escaping that already works), auth resolving *after*
+axum's JSON extractor (not a bypass; a well-formed unauthenticated `POST` still returns
+401), and `/metrics` counters being process-lifetime, so the SLO baseline must be read
+before a restart.
 
 The table below is the rationale for each item.
 
