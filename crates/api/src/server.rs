@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use axum::extract::{Path, Request, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -280,11 +280,86 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/health", get(health))
         .route("/metrics", get(metrics))
-        .route("/verify", post(start_verification))
+        // The bearer gate is a *route layer*, not a check inside the handler, so
+        // it runs before axum's `Json` extractor. With the check in the handler
+        // an unauthenticated caller still reached the deserializer and read its
+        // messages back (422 on a bad body, 415 on a bad content type) — never a
+        // bypass, since no job could be created, but a schema disclosure and a
+        // scrap of unauthenticated work that neither needed to exist.
+        .route(
+            "/verify",
+            post(start_verification).route_layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                require_bearer_token,
+            )),
+        )
         .route("/verifications", get(list_verifications))
         .route("/verify/{key}", get(get_verification))
         .with_state(state)
         .layer(axum::middleware::from_fn(log_requests))
+        .layer(axum::middleware::from_fn(security_headers))
+}
+
+/// Bearer gate on `POST /verify`, ahead of body extraction (docs/security.md).
+///
+/// `start_verification` checks the same thing again. That redundancy is
+/// deliberate: this layer is the gate, the handler's check is what still holds if
+/// the route is ever rewired, and an auth control is the wrong place to economise.
+async fn require_bearer_token(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Response {
+    if !is_authorized(state.api_token.as_deref(), request.headers()) {
+        return ApiError::Unauthorized.into_response();
+    }
+    next.run(request).await
+}
+
+/// Response security headers for the browsable explorer (docs/security.md, G8).
+///
+/// The page renders content that originates with strangers — contract ids, source
+/// URIs, and above all the build log, which is the output of compiling code we did
+/// not write. Escaping is the control that keeps that safe, and it is tested; this
+/// is the layer behind it, so that a future escaping slip is a *blocked* script
+/// rather than an executed one.
+///
+/// The policy can afford to be strict because the page was written without a single
+/// inline script, inline style, or event-handler attribute, and it loads nothing
+/// cross-origin — so `unsafe-inline` is needed nowhere. `data:` is allowed for
+/// images alone, which covers the inline SVG favicon and the CSS paper-grain
+/// texture. Keep it that way: reaching for `unsafe-inline` to land one quick style
+/// would forfeit most of what this header buys.
+async fn security_headers(request: Request, next: Next) -> Response {
+    const POLICY: &str = "default-src 'none'; \
+         script-src 'self'; \
+         style-src 'self'; \
+         img-src 'self' data:; \
+         font-src 'self'; \
+         connect-src 'self'; \
+         base-uri 'none'; \
+         form-action 'self'; \
+         frame-ancestors 'none'";
+
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    headers.insert(
+        axum::http::header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(POLICY),
+    );
+    // The assets are served with explicit content types; this stops a browser
+    // second-guessing them, which is how a served text file becomes a script.
+    headers.insert(
+        axum::http::header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    // Paths carry contract ids and job numbers; there is no reason to hand them
+    // to a third party on an outbound click.
+    headers.insert(
+        axum::http::header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    response
 }
 
 /// One structured log line per request: method, path, status, latency (roadmap
@@ -880,6 +955,107 @@ mod tests {
             Some("s3cret"),
             &headers_with_auth("Bearer ")
         )); // empty token
+    }
+
+    /// A state with auth on, for the router-level gate tests below.
+    fn gated_state() -> AppState {
+        AppState::new(
+            Db::open_in_memory().expect("in-memory db"),
+            Docker::autodetect(),
+            "http://rpc.invalid".into(),
+            true,
+            Some("s3cret".into()),
+        )
+    }
+
+    fn post_verify(token: Option<&str>) -> Request {
+        let mut builder = Request::builder()
+            .method("POST")
+            .uri("/verify")
+            .header("content-type", "application/json");
+        if let Some(t) = token {
+            builder = builder.header("authorization", format!("Bearer {t}"));
+        }
+        // A body that cannot deserialize into `VerifyRequest`: reaching the
+        // extractor is observable as a 422, being stopped short of it as a 401.
+        builder
+            .body(axum::body::Body::from("{}"))
+            .expect("build request")
+    }
+
+    /// The bearer gate runs *ahead* of the body extractor.
+    ///
+    /// While the check lived inside the handler, axum deserialized first, so an
+    /// unauthenticated caller got `422` carrying the deserializer's complaint
+    /// (`missing field bldimg`). Never a bypass — no job could be created — but it
+    /// disclosed the request schema and did work for a request already destined to
+    /// be refused. Surfaced by the 0.7 deploy; see docs/security.md.
+    #[tokio::test]
+    async fn unauthenticated_post_is_refused_before_the_body_is_parsed() {
+        use tower::ServiceExt;
+
+        let response = router(gated_state())
+            .oneshot(post_verify(None))
+            .await
+            .expect("router response");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// The counterpart, so the test above cannot pass by rejecting everything:
+    /// with the right token the request gets past the gate and the extractor does
+    /// its job, which a malformed body makes visible as a 422.
+    #[tokio::test]
+    async fn authenticated_post_reaches_the_body_extractor() {
+        use tower::ServiceExt;
+
+        let response = router(gated_state())
+            .oneshot(post_verify(Some("s3cret")))
+            .await
+            .expect("router response");
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    /// Responses carry the explorer's security headers, and the policy stays
+    /// strict (docs/security.md, G8).
+    ///
+    /// The page is written without inline script or style, so `unsafe-inline`
+    /// should never appear here. If a future change seems to need it, that change
+    /// is what to reconsider — not this assertion.
+    #[tokio::test]
+    async fn responses_carry_a_strict_content_security_policy() {
+        use tower::ServiceExt;
+
+        let response = router(test_state())
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(axum::body::Body::empty())
+                    .expect("build request"),
+            )
+            .await
+            .expect("router response");
+
+        let csp = response
+            .headers()
+            .get(axum::http::header::CONTENT_SECURITY_POLICY)
+            .and_then(|v| v.to_str().ok())
+            .expect("CSP header present");
+
+        assert!(csp.contains("default-src 'none'"), "{csp}");
+        assert!(csp.contains("script-src 'self'"), "{csp}");
+        assert!(csp.contains("frame-ancestors 'none'"), "{csp}");
+        assert!(!csp.contains("unsafe-inline"), "policy loosened: {csp}");
+        assert!(!csp.contains("unsafe-eval"), "policy loosened: {csp}");
+
+        assert_eq!(
+            response
+                .headers()
+                .get(axum::http::header::X_CONTENT_TYPE_OPTIONS)
+                .and_then(|v| v.to_str().ok()),
+            Some("nosniff")
+        );
     }
 
     #[test]

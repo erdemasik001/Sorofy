@@ -24,3 +24,10 @@ hex.workspace = true
 axum = "0.8.9"
 rusqlite = { version = "0.32", features = ["bundled"] }
 # axum REST layer is added in Day2.
+
+[dev-dependencies]
+# `ServiceExt::oneshot` drives the assembled router in-process. Needed to test
+# middleware *ordering* — that the bearer gate runs ahead of the body extractor —
+# which no unit test on the handler can observe. Already in the lock as an axum
+# transitive, so this adds nothing to the dependency tree.
+tower = { version = "0.5.3", features = ["util"] }
