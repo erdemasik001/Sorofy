@@ -32,11 +32,11 @@ elsewhere — worth confirming, because it is roughly half spent.
 
 It funds exactly three deliverables, and its out-of-scope list is explicit:
 
-| SOW deliverable | Status | What is missing |
+| SOW deliverable | Status | Evidence ([`docs/evidence/`](evidence/)) |
 |---|---|---|
-| **1. Deterministic build engine** (`verify-core` CLI, digest-pinned image, sha256 vs on-chain) | ✅ Built **and run on the live host** — `VERIFIED` (exit 0) on the fixture, `MISMATCH` (exit 1) on a one-word source change | A screenshot of those two runs |
-| **2. Public REST API, **live on testnet**, cached, `trust_level` in the schema | ✅ **Live** at [`https://sorofy.site`](https://sorofy.site) — **two distinct testnet contracts** verified through it against RPC-resolved hashes, `trust_level` in the response | A screenshot of a `GET` returning JSON |
-| **3. Retroactive path** (source + vetted `bldimg` out-of-band, ≥1 real pre-SEP-58 contract) | ✅ Proven (day3) | A demo recording plus the contract id |
+| **1. Deterministic build engine** (`verify-core` CLI, digest-pinned image, sha256 vs on-chain) | ✅ Built **and run on the live host** — `VERIFIED` (exit 0) on the fixture, `MISMATCH` (exit 1) on a one-word source change | ✅ Public repo + public GHCR image, plus `a1-verify-core-verified.png` / `a1-verify-core-mismatch.png` |
+| **2. Public REST API, **live on testnet**, cached, `trust_level` in the schema | ✅ **Live** at [`https://sorofy.site`](https://sorofy.site) — **two distinct testnet contracts** verified through it against RPC-resolved hashes, `trust_level` in the response | ✅ Live URL, plus `c1-get-verify-by-contract-id.png` (the form the SOW names), `c1-get-verify-by-job-id.png`, `c1-explorer-verified.png` |
+| **3. Retroactive path** (source + vetted `bldimg` out-of-band, ≥1 real pre-SEP-58 contract) | ✅ Proven (day3) | ✅ `c3-demo.mp4` against the live service, plus contract id [`CAZAVVTM…`](https://stellar.expert/explorer/testnet/contract/CAZAVVTM3GXFNCLR66FYHJJ43MEEUV3C6PQYRQT5JVGAO2RS6S4OHRT6) on StellarExpert |
 
 **Explicitly out of SOW scope:** multi-verifier/decentralisation ("architected and
 documented as the next milestone"), mainnet + audit, explorer/wallet UI, an
@@ -48,25 +48,31 @@ Phase 2 goes far past deliverable 3, which needs one contract verified, not a
 registry with a submission and moderation flow. Everything else in this document is
 post-SOW.
 
-**Status 2026-08-16:** 0.7 shipped and the service is live, so all three funded
-deliverables are *built and running*, and C2 is closed with a second testnet contract
-deployed and verified through the live API (inventory below). What is left of the SOW is
-**evidence capture** — two screenshots and a demo recording. Everything they document is
-already true against the live URL.
+**Status 2026-08-17 — the SOW is complete.** 0.7 shipped and the service is live, so all
+three funded deliverables are built and running; C2 closed with a second testnet contract
+deployed and verified through the live API (inventory below); and the evidence is now
+captured against the live service and the live host — see [`docs/evidence/`](evidence/),
+which maps each file to the deliverable it answers and to the command that produced it.
+
+The section-6 checklist the SOW sets out is met item by item: an open-source repo (public,
+with the pinned build image also public on GHCR) plus the two `verify-core` runs; the live
+API URL plus a `GET /verify/{contract_id}` returning JSON for a real testnet contract; and
+a demo recording of a metadata-less contract verified from out-of-band source, with its
+contract id viewable on StellarExpert.
 
 ### Delivery plan
 
-Two of the three deliverables are already built; what remains is the deploy and
-the evidence that makes the work reviewable. The evidence is a deliverable in its
-own right, not paperwork: the SOW is signed off by the Ambassador Chapter Lead
-and says the proof must be reviewable "with minimal technical expertise", so a
-live URL and a recording carry more weight at sign-off than any amount of code.
+The plan that got from "built" to "delivered". The evidence was treated as a
+deliverable in its own right, not paperwork: the SOW is signed off by the
+Ambassador Chapter Lead and says the proof must be reviewable "with minimal
+technical expertise", so a live URL and a recording carry more weight at sign-off
+than any amount of code. All four blocks are now closed.
 
 | Block | Work | Status |
 |---|---|---|
-| **A — Evidence that needs nothing** | A1 `verify-core` showing `verified` and, on altered source, `mismatch` · A2 parameterise [`scripts/demo.ps1`](../scripts/demo.ps1), whose API URL was hardcoded to localhost, so the recording can run against the live service · A3 a one-page delivery note aimed at a non-technical reviewer | A1 ✅ run · A2 ✅ (`-Api` parameter, commit `d796df9`) · A3 ✅ [delivery-note.md](delivery-note.md) |
+| **A — Evidence that needs nothing** | A1 `verify-core` showing `verified` and, on altered source, `mismatch` · A2 parameterise [`scripts/demo.ps1`](../scripts/demo.ps1), whose API URL was hardcoded to localhost, so the recording can run against the live service — plus [`scripts/demo.sh`](../scripts/demo.sh), the same demo in bash/curl/python3, so the recording does not depend on having PowerShell on the machine at hand · A3 a one-page delivery note aimed at a non-technical reviewer | A1 ✅ run **and captured** on the live host · A2 ✅ (`-Api` parameter, commit `d796df9`; bash twin added at delivery) · A3 ✅ [delivery-note.md](delivery-note.md) |
 | **B — Deploy** | The [playbook](deploy-playbook.md) end to end: host baseline → fetch network + egress rules → image → run → TLS → the 11 smoke tests | ✅ **Done 2026-08-16**, 11/11 passed |
-| **C — Evidence on the live service** | C1 screenshot of `GET /verify/{id}` returning JSON with `status` and `trust_level` · C2 verify 2–3 real testnet contracts through the live API · C3 record the demo (retroactive verify, then tamper → `mismatch`) | C2 ✅ **2 contracts, both RPC-resolved** (inventory below) · C1 ⬜ · C3 ⬜ |
+| **C — Evidence on the live service** | C1 screenshot of `GET /verify/{id}` returning JSON with `status` and `trust_level` · C2 verify 2–3 real testnet contracts through the live API · C3 record the demo (retroactive verify, then tamper → `mismatch`) | C1 ✅ (by contract id — the form section 6 names — and by job id) · C2 ✅ **2 contracts, both RPC-resolved** (inventory below) · C3 ✅ [`c3-demo.mp4`](evidence/c3-demo.mp4) |
 | **D — Close the paperwork** | Playbook step 7: live URL into the README, G4-b + G7 closed, ADR action items 2–4 ticked, 0.7 done | ✅ Done |
 
 **Contract inventory for C2.** The SOW asks for 2–3 *real testnet contracts*, and the
@@ -90,9 +96,12 @@ hash is by construction one the engine lands on again. Live job
 A third contract would exercise the same lookup path a third time; the two above
 already cover both source shapes and both size classes.
 
-**What remains is evidence capture, not engineering:** the two screenshots (C1, and the
-`verify-core` pair for A1) and the recording (C3). Every claim they document is already
-true and reproducible against the live URL.
+**Evidence captured 2026-08-17.** The `verify-core` pair (A1) was re-run on the live host
+and photographed; the mismatch run rebuilt to `2f8a8fff…`, the same value
+[day1](day1-build-engine.md) recorded days earlier on a different machine — so the pair
+doubles as a determinism check. C1 and C3 were captured against the live URL. Nothing in
+them was staged: every command is in [`docs/evidence/README.md`](evidence/README.md) and
+re-runnable.
 
 ## Definition of "flawless" (the bar every phase is held to)
 

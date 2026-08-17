@@ -25,22 +25,23 @@ All three are delivered. Everything below can be checked without installing anyt
 
 ## How to verify it yourself, in 30 seconds
 
-**Open this link:** [a verified contract](https://sorofy.site/verify/CAZAVVTM3GXFNCLR66FYHJJ43MEEUV3C6PQYRQT5JVGAO2RS6S4OHRT6)
-· and [a second one](https://sorofy.site/verify/CAEA4BXANQ2JQR4AF5XG53A25LU5N2QERRFC5P7ZY4W6YDQ4DGLEZRYH)
+**Open this link:** [a verified contract](https://sorofy.site/#/v/CAZAVVTM3GXFNCLR66FYHJJ43MEEUV3C6PQYRQT5JVGAO2RS6S4OHRT6)
+· and [a second one](https://sorofy.site/#/v/CAEA4BXANQ2JQR4AF5XG53A25LU5N2QERRFC5P7ZY4W6YDQ4DGLEZRYH)
 
 You will see two long strings of letters and numbers:
 
-- **`expected_wasm_sha256`** — the fingerprint of the contract **as it exists on the
+- **On chain (expected)** — the fingerprint of the contract **as it exists on the
   Stellar network**. Sorofy reads this from the network itself; the person requesting
   the check cannot supply it or influence it.
-- **`rebuilt_wasm_sha256`** — the fingerprint of what Sorofy got when it **rebuilt the
+- **Rebuilt here** — the fingerprint of what Sorofy got when it **rebuilt the
   contract from its published source code**.
 
 They are identical, and the status reads `verified`. That is the whole product: the
 source really does produce those bytes.
 
 You can also browse <https://sorofy.site> in a normal browser for a readable view of
-every check the service has run.
+every check the service has run. The same addresses answer with raw JSON when a program
+asks for it instead of a browser — that is how an explorer or wallet would query them.
 
 ## That the check has teeth
 
@@ -76,12 +77,12 @@ open — is kept in the repository. Nothing was quietly dropped.
 
 | | |
 |---|---|
-| Checks run through the live service | 17 |
-| Correctly reported `verified` | 15 |
-| Correctly reported `mismatch` (deliberate test) | 1 |
+| Checks run through the live service | 24 |
+| Correctly reported `verified` | 19 |
+| Correctly reported `mismatch` (deliberate tests) | 4 |
 | Correctly **refused** (deliberate test: a build environment that could be swapped after the fact) | 1 |
 | Wrong answers | 0 |
-| Average time to rebuild and check a contract | 86 seconds |
+| Average time to rebuild and check a contract | 85 seconds |
 
 Anyone can recompute this list at <https://sorofy.site/verifications> — it is the
 service's own record, not a figure typed into a document.

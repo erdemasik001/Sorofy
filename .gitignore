@@ -8,6 +8,11 @@
 *.wasm
 .DS_Store
 
+# Raw screen-recording masters. The delivery evidence ships the transcoded mp4
+# (docs/evidence/c3-demo.mp4, ~17 MB); the .mov straight off the screen recorder
+# is ~5x that for the same 3 minutes, and git keeps every byte forever.
+docs/evidence/*.mov
+
 # Design-assistant skills installed via `npx skills` / impeccable — local dev
 # tooling (design-taste, emil, impeccable), not part of the product.
 .agents/

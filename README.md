@@ -6,7 +6,8 @@ An open-source, multi-verifier source verification service that proves a Soroban
 >
 > Open it in a browser for the explorer, or `curl` it for JSON — the same URL serves both.
 > A verified contract, expected and rebuilt hash side by side:
-> [`CAZAVVTM…`](https://sorofy.site/verify/CAZAVVTM3GXFNCLR66FYHJJ43MEEUV3C6PQYRQT5JVGAO2RS6S4OHRT6)
+> [`CAZAVVTM…`](https://sorofy.site/#/v/CAZAVVTM3GXFNCLR66FYHJJ43MEEUV3C6PQYRQT5JVGAO2RS6S4OHRT6)
+> in the explorer, or [as JSON](https://sorofy.site/verify/CAZAVVTM3GXFNCLR66FYHJJ43MEEUV3C6PQYRQT5JVGAO2RS6S4OHRT6).
 >
 > **Status: the MVP was awarded by the SCF; it is now deployed as a testnet-grade
 > service.** The engine reproduces a real testnet contract byte-for-byte against its
@@ -73,7 +74,7 @@ flowchart TD
 | Real `bldimg` digest | Image published to GHCR (single-arch, `sha256:cff44167…`); digest enforcement on by default — bare tags rejected before any container — [day3](docs/day3-deploy-demo.md) |
 | Hardening doesn't break the build | The same fixture still reproduces byte-for-byte with the swap/capability/privilege caps applied and the fetch phase pinned to a dedicated network — [security.md](docs/security.md) |
 | Tested in CI, not just locally | The `#[ignore]`d suite — 6 reproduction cases (real containers) + live RPC lookups — runs on merges to `master` via [`integration.yml`](.github/workflows/integration.yml) |
-| Live, not just deployable | [`https://sorofy.site`](https://sorofy.site) serves the results of real rebuilds run on that host: 17 jobs — 15 `verified`, 1 deliberate `mismatch`, 1 deliberate `error` (a bare-tag `bldimg`, refused before any container) — average build 85.9 s over 16 builds. Recomputable at any time from [`GET /verifications`](https://sorofy.site/verifications) |
+| Live, not just deployable | [`https://sorofy.site`](https://sorofy.site) serves the results of real rebuilds run on that host: 24 jobs — 19 `verified`, 4 deliberate `mismatch`, 1 deliberate `error` (a bare-tag `bldimg`, refused before any container) — average build 85.0 s over 23 builds. Recomputable at any time from [`GET /verifications`](https://sorofy.site/verifications) |
 | Two real testnet contracts, hashes from the network | [`CAZAVVTM…`](https://stellar.expert/explorer/testnet/contract/CAZAVVTM3GXFNCLR66FYHJJ43MEEUV3C6PQYRQT5JVGAO2RS6S4OHRT6) (token, 8 584 B) and [`CAEA4BXA…`](https://stellar.expert/explorer/testnet/contract/CAEA4BXANQ2JQR4AF5XG53A25LU5N2QERRFC5P7ZY4W6YDQ4DGLEZRYH) (hello-world, 660 B) both `verified` through the live API against hashes **resolved via RPC**, not supplied by the caller — [roadmap](docs/testnet-roadmap.md) |
 | Tamper is caught by the hash, not by luck | One word changed in the fixture (`"Hello"` → `"Howdy"`) still compiles to **exactly 660 bytes**, and `verify-core` returns `MISMATCH` with exit code 1: `2f8a8fff…` against the expected `b68602…` |
 
@@ -117,7 +118,8 @@ docs/
   integration.yml    # the #[ignore]d Docker/RPC tests (master + on demand)
   audit.yml          # cargo audit over the locked tree (dep changes + weekly)
 scripts/
-  demo.ps1           # local demo runner (retroactive verify + tamper→mismatch)
+  demo.ps1           # demo runner, PowerShell (retroactive verify + tamper→mismatch)
+  demo.sh            # the same demo in bash/curl/python3 — no PowerShell needed
 PLAN.md            # day-by-day MVP build plan (complete; superseded by the roadmap)
 ```
 
