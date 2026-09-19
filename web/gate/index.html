@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sorofy — verification gate</title>
+<meta name="description" content="Money does not enter a contract that a staked, slashable verifier set has not verified. Anchor deposit, then a gate that reads consensus from the registry on chain.">
+
+<!-- This page cannot have the explorer's no-egress property: it has to reach an anchor, a
+     Soroban RPC and a wallet. So the policy enumerates exactly those, and nothing else. Note
+     what is still forbidden — no inline script, no inline style, no eval, no frames.
+     `frame-ancestors` is deliberately absent: a browser ignores it in a <meta> element and
+     warns, so it belongs in a response header (the deploy's, not this file's). -->
+<meta http-equiv="Content-Security-Policy" content="
+  default-src 'none';
+  script-src 'self' https://cdn.jsdelivr.net;
+  style-src 'self';
+  img-src 'self' data:;
+  font-src 'self';
+  connect-src 'self' https://cdn.jsdelivr.net https://soroban-testnet.stellar.org https://horizon-testnet.stellar.org https://testanchor.stellar.org;
+  base-uri 'none';
+  form-action 'none'">
+
+<link rel="stylesheet" href="./app.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'><rect width='128' height='128' rx='28' fill='%230d1117'/><g transform='translate(0 14)'><g fill='none' stroke-width='14' stroke-linecap='butt' stroke-linejoin='miter'><path d='M52 9 H36 L26 19 V40 L14 50 L26 60 V81 L36 91 H52' stroke='%23ffffff'/><path d='M76 9 H92 L102 19 V40 L114 50 L102 60 V81 L92 91 H76' stroke='%23ffc629'/></g><rect x='48' y='35' width='32' height='11' fill='%23ffc629'/><rect x='48' y='54' width='32' height='11' fill='%23ffc629'/></g></svg>">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="site-header__inner">
+    <span class="brandlink">
+      <svg class="brandmark" viewBox="0 0 128 100" role="img" aria-label="Sorofy" focusable="false">
+        <g fill="none" stroke-width="14" stroke-linecap="butt" stroke-linejoin="miter">
+          <path class="b-src" d="M52 9 H36 L26 19 V40 L14 50 L26 60 V81 L36 91 H52"/>
+          <path class="b-out" d="M76 9 H92 L102 19 V40 L114 50 L102 60 V81 L92 91 H76"/>
+        </g>
+        <rect class="b-eq" x="48" y="35" width="32" height="11"/>
+        <rect class="b-eq" x="48" y="54" width="32" height="11"/>
+      </svg>
+      <span class="wordmark">Sorofy</span>
+      <span class="netbadge mono">TESTNET</span>
+    </span>
+    <span class="site-header__tag">Verification gate</span>
+  </div>
+</header>
+
+<main>
+
+  <section class="hero">
+    <h1>Money does not enter code nobody has checked.</h1>
+    <p class="hero__sub">
+      Bring a balance through an anchor, then try to deposit it into a protocol. Before
+      anything is signed, this page reads the target contract's bytes from the ledger and asks
+      the verifier registry what a staked, slashable verifier set concluded about them.
+    </p>
+  </section>
+
+  <!-- ─── 1. The gate ─────────────────────────────────────────────────────────────────
+       Deliberately first, and deliberately usable on its own: reading a verdict is free,
+       anonymous and token-free, and no wallet is needed to get one. -->
+  <section class="section" id="gate-section">
+    <div class="section__head">
+      <h2>1 · Is it verified?</h2>
+      <span class="brut-pill" id="gate-free">No wallet, no account, no token</span>
+    </div>
+
+    <div class="brut-card">
+      <label class="label" for="target">Contract to check</label>
+      <div class="row">
+        <select class="brut-input" id="target"></select>
+        <button class="brut-btn brut-btn-accent" id="check" type="button">Check</button>
+      </div>
+      <p class="hint" id="target-note"></p>
+
+      <label class="label" for="custom">…or any contract id</label>
+      <div class="row">
+        <input class="brut-input mono" id="custom" type="text" spellcheck="false"
+               placeholder="C… contract id" autocomplete="off">
+        <button class="brut-btn" id="check-custom" type="button">Check that one</button>
+      </div>
+    </div>
+
+    <div id="verdict" class="verdict" hidden></div>
+  </section>
+
+  <!-- ─── 2. The anchor ───────────────────────────────────────────────────────────── -->
+  <section class="section">
+    <div class="section__head">
+      <h2>2 · Bring a balance</h2>
+      <span class="brut-pill" id="anchor-name">anchor</span>
+    </div>
+
+    <div class="brut-card">
+      <ol class="steps" id="steps">
+        <li data-step="wallet"><span class="steps__n">1</span><span class="steps__t">Connect a wallet</span><span class="steps__s"></span></li>
+        <li data-step="toml"><span class="steps__n">2</span><span class="steps__t">Read the anchor's stellar.toml (SEP-1)</span><span class="steps__s"></span></li>
+        <li data-step="auth"><span class="steps__n">3</span><span class="steps__t">Sign the anchor's challenge (SEP-10)</span><span class="steps__s"></span></li>
+        <li data-step="trust"><span class="steps__n">4</span><span class="steps__t">Trustline to the issuer</span><span class="steps__s"></span></li>
+        <li data-step="deposit"><span class="steps__n">5</span><span class="steps__t">Interactive deposit (SEP-24)</span><span class="steps__s"></span></li>
+      </ol>
+
+      <div class="row">
+        <button class="brut-btn brut-btn-accent" id="connect" type="button">Connect wallet</button>
+        <button class="brut-btn" id="anchor-run" type="button" disabled>Run the anchor flow</button>
+        <select class="brut-input" id="asset"></select>
+      </div>
+      <p class="hint" id="anchor-note"></p>
+    </div>
+  </section>
+
+  <!-- ─── 3. The deposit ──────────────────────────────────────────────────────────── -->
+  <section class="section">
+    <div class="section__head">
+      <h2>3 · Deposit through the gate</h2>
+      <span class="brut-pill" id="pool-name">protocol</span>
+    </div>
+
+    <div class="brut-card">
+      <div class="row">
+        <input class="brut-input mono" id="amount" type="text" inputmode="decimal"
+               placeholder="amount" value="1" autocomplete="off">
+        <button class="brut-btn brut-btn-accent" id="deposit" type="button" disabled>Supply</button>
+      </div>
+      <p class="hint" id="deposit-note">Connect a wallet and check a target first.</p>
+      <div id="deposit-result" class="verdict" hidden></div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section__head"><h2>What this is, and is not</h2></div>
+    <div class="brut-card brut-card-2">
+      <ul class="limits" id="limits"></ul>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="site-footer__inner">
+    <span>The verdict is read from the chain, never from Sorofy's API.</span>
+    <span>Testnet only. Nothing here is money.</span>
+    <a href="https://github.com/erdemasik001/Sorofy">Repository</a>
+  </div>
+</footer>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>

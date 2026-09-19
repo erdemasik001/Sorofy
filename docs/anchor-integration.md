@@ -1,8 +1,12 @@
 # Ecosystem integration — verification in the path of money
 
-> **Status: proposal, not implemented.** Written 2026-09-19 for the Stellar Pro Hackathon
-> (Scale track) and rewritten the same day. Nothing here exists in the repository.
-> [HACKATHON.md](../HACKATHON.md) keeps recording only what was built.
+> **Status: design, now partly built.** Written 2026-09-19 for the Stellar Pro Hackathon
+> (Scale track), rewritten the same day, and since then the **front-end gate (§4a) and the
+> anchor flow (§5) have been implemented** in [`web/gate/`](../web/gate/README.md) and run
+> against testnet. Everything else here — §4b above all — is still a proposal.
+> [HACKATHON.md](../HACKATHON.md) remains the record of status; where the two disagree, it is
+> right. §10 records what was learned while building, including where the answers were
+> unwelcome.
 >
 > This document answers the two judging requirements Sorofy does not otherwise meet —
 > integration with an eligible protocol, and an anchor / local-payments flow — and argues they
@@ -186,15 +190,96 @@ is running.
 
 ## 10. Open questions
 
-None assumed. Each belongs at the anchor workshop or in a mentor conversation:
+Five were listed when this was written. **Three have answers now, one is narrowed, and one is
+untouched.** Each answer records how it was checked, because an answer without its method is
+only a better-dressed assumption. Everything below was checked against the live network on
+2026-09-19. Two of the answers are inconvenient and are written down as found.
 
-1. Is there a testnet anchor that handles TRY? If not, §9's first bullet is the wording.
-2. Which partner — Bridge, BlindPay, or another from the eligible list — and does it cover
-   Turkey?
-3. Blend v2 or DeFindex: testnet contract address and deposit interface.
-4. Can a contract read another contract's wasm hash on-chain (§4b)?
-5. Is the testnet stablecoin faucet enough to fund the demo accounts, so nothing depends on a
-   live deposit settling during the presentation?
+### Answered
+
+**1 · Is there a testnet anchor that handles TRY?** *An anchor, yes. TRY, no.*
+
+`testanchor.stellar.org` — SDF's reference server — serves SEP-1 (200), SEP-10 at `/auth`,
+SEP-12 at `/sep12` and SEP-24 at `/sep24`. Its `[[CURRENCIES]]` are **SRT, USDC and native**,
+and `GET /sep24/info` enables deposit for exactly those three, 1–10 units each. There is no
+TRY, and the SEP-10 challenge validates against the anchor's own `SIGNING_KEY`
+(`GCHLHDBO…33PR`), so the flow is real end to end.
+
+So §9's first bullet is the wording, and it is not a hedge — it is the fact:
+*the deposit flow works end to end against a test anchor; a TRY partner is an integration
+question.* Anything that calls this a lira on-ramp is false.
+
+**3 · Blend v2 or DeFindex: testnet address and deposit interface?** *Both exist. Blend v2 is
+the one wired.*
+
+| | Blend v2 | DeFindex |
+|---|---|---|
+| Testnet id | `CCEBVDYM…44HGF` (pool) | `CBMVK2JK…ZDWHN` (USDC vault) |
+| Wasm on chain | `a41fc53d…` — matches `lendingPoolV2` in blend-utils | vault wasm `f345228d…` |
+| Deposit | `submit(from, spender, to, requests)`, `Request { address, amount, request_type }`, `RequestType::Supply = 0` | `deposit(amounts_desired, amounts_min, from, invest)` |
+| Reserves | `get_reserve_list()` → native, wETH, wBTC, USDC | — |
+
+Both interfaces were read off the chain with `stellar contract info interface`, and Blend's
+request type from `blend-contracts-v2/pool/src/pool/actions.rs` — not from documentation, which
+is where a wrong constant would have silently performed a different action with a user's money.
+
+**5 · Is the faucet enough to fund the demo?** *Yes, and the exposure is smaller than it
+looked.*
+
+Friendbot funds a fresh testnet account with 10,000 XLM (HTTP 200, confirmed on Horizon at
+`horizon-testnet.stellar.org`). More to the point: **the gate's read path needs no balance at
+all** — no wallet, no account, no token — so the *blocked* half of demo beat 6 cannot be broken
+by a settlement that fails to arrive. Only the *through* half needs funds, and XLM is what it
+needs.
+
+### Narrowed
+
+**2 · Which partner — Bridge, BlindPay, another — and does it cover Turkey?** Still open, and
+deliberately not answered from second-hand sources. The Stellar Anchor Directory returns
+"No ramp assets available for this location" rather than a list that could be checked. This is a
+partnership question for the workshop, not one determinable from a contract, and until someone
+answers it §9's first bullet stands unchanged.
+
+### Untouched
+
+**4 · Can a contract read another contract's wasm hash on-chain (§4b)?** No work done. It
+remains stream 8's time-boxed spike, and §4a shipped in parallel exactly so the demo never
+depended on the answer.
+
+### Three nobody asked, which turned out to matter more
+
+**The anchor's USDC is not the pool's USDC.** The anchor issues USDC from `GBBD47IF…`, whose SAC
+is `CBIELTK6…`; the Blend pool's USDC reserve is `CAQCFVLO…`, a different issuer. They are not
+the same token and one cannot be supplied in place of the other. **XLM is the only asset that
+composes**: the anchor deposits `native` and the pool's first reserve is the native SAC
+`CDLZFC3S…`. The flow uses XLM for that reason and no other. A consequence worth stating: with
+XLM, §5's step 4 is vacuous, because native needs no trustline — the step is implemented for
+the issued assets, where it is genuinely required, and the interface says which case it is in
+rather than skipping quietly.
+
+**Nothing on chain names a build.** `stellar contract info meta` on the Blend v2 pool returns
+`source_repo: github:blend-capital/blend-contracts-v2` and stops; the VRFY token carries only
+compiler versions. Neither publishes SEP-58 `bldimg` / `bldopt` / `source_sha256`. Two things
+follow:
+
+- This *is* the measurement [hackathon-plan.md §5](hackathon-plan.md) predicts. The pool the
+  gate is pointed at cannot be verified today, by anyone. The gate blocking it is the finding,
+  not a disappointment, and it is worth saying in those words on stage.
+- The gate cannot derive a claim from a contract alone. The registry files attestations under
+  `(wasm_hash, input_digest)` and offers no "anything for this hash?" query — the same gap §4b
+  names, and it bites §4a too. It is solved by discovering claims from the registry's own
+  `attested` events (topic 2 is the wasm hash, so the RPC filters server-side), with a
+  configured build descriptor as the fallback. That scan is bounded by event retention:
+  ~121 000 ledgers, roughly a week, and the query **pages** — a 16 000-ledger window returned an
+  empty first page with a cursor where an 8 000-ledger one returned its events directly.
+
+**Sorofy's own API cannot be read from a browser.** `sorofy.site` sends no
+`Access-Control-Allow-Origin`, so a page on another origin cannot call `GET /verify/{hash}`.
+The gate does not need it and is stronger without it: the wasm hash comes from the ledger and
+the verdict from the registry, so **a lying or compromised API cannot produce a pass** — the
+worst a wrong claim can do is name something nobody attested, which reads as `NoClaim` and
+blocks. If the API is ever wanted in this path, adding CORS is a change to `crates/api/`, not
+to the gate.
 
 ## 11. Where it fits
 

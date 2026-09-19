@@ -1,0 +1,12 @@
+{
+  "name": "sorofy-gate",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Sorofy verification gate — anchor deposit flow, front-end gate (docs/anchor-integration.md §4a)",
+  "//": "No dependencies, and none intended. The two browser libraries are loaded from a pinned CDN at run time (see config.js VENDOR); this file exists so `node --test` reads the .js sources as ES modules, which is what the browser does with them too.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "serve": "python3 serve.py"
+  }
+}
