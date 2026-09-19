@@ -36,9 +36,9 @@ Full design, the slash rule and its alternatives, and the honest limits:
 |---|---|---|
 | 0 | Repository discovery, contradictions with the plan reported | ✅ done |
 | 1 | Toolchain (Rust 1.91.1, `wasm32v1-none`, stellar-cli 28.0.0, Docker via OrbStack) and four funded testnet identities; sample contract built, deployed, invoked | ✅ done |
-| 2 | Design document, reward-economics projection | ✍️ revised, awaiting approval |
+| 2 | Design document, reward-economics projection | ✅ done, approved |
 | 3 | VRFY token (SEP-41): deployed to testnet, minted to the three verifier accounts, transfer/balance/burn checked with the CLI | ✅ done |
-| 4 | Registry contract: stake, attest, conservative consensus, slash | ⏳ not started |
+| 4 | Registry contract: stake, attest, conservative consensus, slash. 35 unit tests, deployed to testnet, walked through end to end with the CLI | ✅ done ([evidence](docs/hackathon-evidence.md)) |
 | 5 | API attestation path (flagged, asynchronous) and follower mode | ⏳ not started |
 | 6 | Three verifiers (two following the first) and a slash demo script | ⏳ not started |
 | 7 | Explorer rows for stakes and attestations; token-free read path. *Bonus, only after the core works:* a clearly labelled "projected rewards" panel | ⏳ not started |
@@ -51,7 +51,8 @@ Full design, the slash rule and its alternatives, and the honest limits:
 | Artifact | Contract ID | Note |
 |---|---|---|
 | VRFY token (SEP-41) | [`CCM2LLD2…HKEDW`](https://stellar.expert/explorer/testnet/contract/CCM2LLD2TAFOMQQUQK62DHCEWNO7UEYOWDXL52GF3KTDK4NMBT6HKEDW) | Soroban standard token example, pinned upstream commit, see [NOTICE](contracts/vrfy-token/NOTICE.md). wasm `3e23ccf5…`, built in the pinned image and **reproduced by Sorofy's own engine** (`VERIFIED` against the on-chain hash) |
-| Registry | — | not deployed yet |
+| Registry (demo/API instance) | [`CA4VYPAG…PCFE`](https://stellar.expert/explorer/testnet/contract/CA4VYPAGEYYOV7CJIBTCJHOGW2KAFQ4AHYEZIY2NA3NXFJGGG4XSPCFE) | wasm `7304a856…`, built in the pinned image. Parameters fixed at deploy: 1,000 VRFY minimum stake, quorum 3, 60-ledger attest window, 120-ledger unbonding, 50 % slash. Kept free of test traffic |
+| Registry (rehearsal instance) | [`CDACBJDL…ZXY4`](https://stellar.expert/explorer/testnet/contract/CDACBJDL7SEXSODGEAQSK5SPVHWZ7QM5PGQP37C7Y3ACYO5Q5QJQZXY4) | identical bytes; used for the STEP 4 walk-through with synthetic claims |
 
 All contract IDs, hashes and transaction hashes live in one file:
 [`contracts/deployments/testnet.json`](contracts/deployments/testnet.json) (public data only).
@@ -91,6 +92,17 @@ v0.5.2) and the Soroban token example
 
 ## Findings along the way
 
+- **`stellar-cli` signs a Soroban auth entry with any key in the local keystore, not just the
+  transaction's source account.** A transaction sourced by `verifier_b` that attested *as*
+  `verifier_a` therefore succeeded here, because `verifier_a`'s key is on the same machine; the
+  decoded transaction shows an auth entry for `verifier_a` carrying `verifier_a`'s signature. The
+  contract behaved correctly (it needed that signature and got it). It does mean a
+  "wrong signer is refused on-chain" demonstration is **not possible on this machine**. That
+  property is covered by a unit test that runs with auth mocking switched off, and the test was
+  checked by mutation (removing `require_auth` from `attest` fails it).
+- **Attestation windows are per claim**, opening at each claim's first attestation, not one
+  global clock. Two of my own walk-through steps assumed otherwise and were wrong; the contract
+  was right. See [the evidence](docs/hackathon-evidence.md).
 - **The engine cannot verify a contract that lives in a subdirectory.** It reads the built
   wasm from a fixed `<source root>/target/wasm32v1-none/release`, and runs `cargo fetch
   --locked` at the source root without the `--manifest-path` a SEP-58 `bldopt` may carry.
@@ -118,3 +130,8 @@ built.
   Root workspace test baseline recorded before touching the API: 60 passed, 0 failed, 9 ignored
   (the ignored ones need Docker, the pinned image and the network).
   Cold build of the token in the pinned image on this Mac (amd64 under Rosetta): 62–66 s.
+- **2026-09-19** — Step 4 done. Registry contract (35 tests, 7 of 7 deliberate mutations
+  caught), built in the pinned image (62 s), two instances on testnet. The deployed VRFY token
+  still reproduces from the newer source tree. On testnet, `slash` burned real VRFY with no
+  external signature (the registry burns its own balance), and the burned amount matched the
+  arithmetic exactly.

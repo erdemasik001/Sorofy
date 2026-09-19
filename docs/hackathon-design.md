@@ -1,8 +1,10 @@
 # Multi-verifier design — staked verifiers, on-chain results
 
-> **Status: design, not implemented.** Written 2026-09-19 for the Stellar Pro Hackathon
-> (Scale track), revised the same day. Nothing below exists in the repository until the
-> corresponding step in [HACKATHON.md](../HACKATHON.md) says so. Testnet only.
+> **Status: partly built.** Written 2026-09-19 for the Stellar Pro Hackathon (Scale track),
+> revised the same day. The VRFY token and the registry contract (§3–§7, §10) are implemented
+> and deployed to testnet (steps 3–4). The API attestation path, follower mode (§8) and
+> everything after them are **still design**; [HACKATHON.md](../HACKATHON.md) says which is
+> which. Testnet only.
 >
 > This supersedes, for the hackathon, the off-chain "signed attestation" sketch under
 > Phase 3 of [testnet-roadmap.md](testnet-roadmap.md). That document is left as it was.
@@ -58,10 +60,13 @@ claim = (wasm_hash, input_digest)
 input_digest = sha256( "sorofy-claim-v1" ‖ source_sha256 ‖ bldimg_digest ‖ canonical(bldopt) )
 ```
 
-`canonical(bldopt)` is a length-prefixed concatenation in submission order. The exact byte
-layout is fixed in STEP 4 and shared by the contract tests and the API, so both derive the same
-digest. `source_sha256` is the archive digest, or the staged tree's digest for a git source
-(deterministic across verifiers; see the determinism note in the roadmap).
+The layout is fixed and implemented in `contracts/registry/src/claim.rs`: the domain string
+`sorofy-claim-v1`, the two 32-byte digests, then `u32` big-endian counts and lengths in front of
+each `bldopt` (in submission order). `bldimg_digest` is the hex after `@sha256:`, decoded. The
+contract never computes it (it only stores what the verifier supplies); a known-answer test pins
+the layout against values produced independently in Python, and the API (STEP 5) must reproduce
+the same vectors. `source_sha256` is the archive digest, or the staged tree's digest for a git
+source (deterministic across verifiers; see the determinism note in the roadmap).
 
 An attestation carries the **rebuilt hash**, not just a verdict:
 
@@ -76,8 +81,9 @@ failure, timeout, infrastructure) are **never attested**: they say nothing about
 
 ## 5. Contract interface (registry)
 
-Signatures are conceptual; STEP 4 pins them against the installed `soroban-sdk` and CLI. Every
-state-changing entry point calls `require_auth` on the acting account.
+Signatures as built in STEP 4 (deviations are listed under *Implementation notes*). Every
+state-changing entry point except `slash` calls `require_auth` on the acting account; `slash` needs
+none, because the contract, not the caller, decides whether it is valid.
 
 | Function | Effect |
 |---|---|
@@ -100,6 +106,29 @@ deactivated. Config in *instance* storage; stakes, unbonding entries, attestatio
 marks in *persistent* storage with TTL extension on write. Events are emitted for stake, attest
 and slash so an indexer can follow them. (Checked against the current docs in STEP 4, not
 assumed.)
+
+### Implementation notes (STEP 4)
+
+What was built differs from the sketch above in these ways, all deliberate:
+
+- The empty consensus state is called `NoClaim`, not `None`.
+- The constructor refuses `quorum < 3`, `min_stake ≤ 0`, `attest_window = 0`, `slash_bps`
+  outside 1–10000, and `unbond_period < attest_window` (the invariant above, enforced).
+- A window is *open* while `ledger < first_attestation + attest_window`: the last accepted
+  attestation is at `first + window − 1`.
+- A slash still burns `slash_bps` of *staked + unbonding*, but takes it from the active stake
+  first and from the unbonding queue only for the remainder.
+- A second `request_unstake` restarts the wait for the whole unbonding balance.
+- `slash` returns the amount burned. Refusals are distinct errors: `ClaimNotDecided`,
+  `NotAttested`, `NotDissenter`, `AlreadySlashed`, `NothingToSlash`.
+- Persistent records are extended by 30 days on every write and nothing extends them later. A
+  registry left alone for longer would lose old records to archival: fine for a testnet
+  prototype, not for anything long-lived.
+- Events: `Staked`, `UnstakeRequested`, `Withdrawn`, `Attested`, `Slashed`.
+
+Evidence: 35 unit tests (the unit-test token is a Stellar Asset Contract, which implements the
+same SEP-41 interface; the deployed one is VRFY) and a mutation pass, and the testnet
+walk-through in [hackathon-evidence.md](hackathon-evidence.md).
 
 ## 6. Consensus — what a consumer sees (conservative)
 

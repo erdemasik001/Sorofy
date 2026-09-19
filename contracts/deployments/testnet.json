@@ -44,7 +44,67 @@
         "burn_admin_1": "ca3469d101f0faff3fae9dc97fd6b592cf5856fb83d95c6a5c01191ab506b7e4"
       }
     },
-    "registry": null
+    "registry": {
+      "standard": "none (Sorofy registry)",
+      "wasm_sha256": "7304a8569657209b42065becf0ddd40e53c7522ad3319290ec5d46f0d229c29b",
+      "wasm_size": 18746,
+      "constructor": {
+        "token": "CCM2LLD2TAFOMQQUQK62DHCEWNO7UEYOWDXL52GF3KTDK4NMBT6HKEDW",
+        "min_stake": "10000000000",
+        "min_stake_vrfy": 1000,
+        "quorum": 3,
+        "attest_window_ledgers": 60,
+        "unbond_period_ledgers": 120,
+        "slash_bps": 5000
+      },
+      "build": {
+        "bldimg": "ghcr.io/erdemasik001/sorofy-build-image@sha256:cff44167d2ee90f901c768ccdb75eb5c382c95295f44bcd7ee4b543f0adf9588",
+        "bldopt": [
+          "--package=sorofy-registry"
+        ],
+        "source_root": "contracts/ as the source root",
+        "source_sha256_staged_tree": "69adb485776ce36cd07f56c00b81fb0176c2fd6771abc1e95c736c2625098b59",
+        "from_commit": "72676c5",
+        "build_seconds": 61.9
+      },
+      "id": "CA4VYPAGEYYOV7CJIBTCJHOGW2KAFQ4AHYEZIY2NA3NXFJGGG4XSPCFE",
+      "cli_alias": "sorofy_registry",
+      "role": "the registry the demos and the API use; kept free of test traffic",
+      "txs": {
+        "upload_wasm": "a67b7e1e699144c1095ce475e48720d524c8f3f759888dfeb1d26d3823dc6559",
+        "deploy": "805bff415359692fd661843b78bc6c22fa53f9eadd0026e002b002ea2e84b2e1"
+      }
+    },
+    "registry_e2e": {
+      "standard": "none (Sorofy registry)",
+      "wasm_sha256": "7304a8569657209b42065becf0ddd40e53c7522ad3319290ec5d46f0d229c29b",
+      "wasm_size": 18746,
+      "constructor": {
+        "token": "CCM2LLD2TAFOMQQUQK62DHCEWNO7UEYOWDXL52GF3KTDK4NMBT6HKEDW",
+        "min_stake": "10000000000",
+        "min_stake_vrfy": 1000,
+        "quorum": 3,
+        "attest_window_ledgers": 60,
+        "unbond_period_ledgers": 120,
+        "slash_bps": 5000
+      },
+      "build": {
+        "bldimg": "ghcr.io/erdemasik001/sorofy-build-image@sha256:cff44167d2ee90f901c768ccdb75eb5c382c95295f44bcd7ee4b543f0adf9588",
+        "bldopt": [
+          "--package=sorofy-registry"
+        ],
+        "source_root": "contracts/ as the source root",
+        "source_sha256_staged_tree": "69adb485776ce36cd07f56c00b81fb0176c2fd6771abc1e95c736c2625098b59",
+        "from_commit": "72676c5",
+        "build_seconds": 61.9
+      },
+      "id": "CDACBJDL7SEXSODGEAQSK5SPVHWZ7QM5PGQP37C7Y3ACYO5Q5QJQZXY4",
+      "cli_alias": "sorofy_registry_e2e",
+      "role": "the same wasm, used for the manual STEP 4 walk-through with synthetic claims (docs/hackathon-evidence.md)",
+      "txs": {
+        "deploy": "b209640aa611009197da30e303ff9fd207fa72cc9fd54bbba918ffaa949b6545"
+      }
+    }
   },
-  "_note": "NOTE: the Sorofy engine reads the built wasm from <source root>/target and runs `cargo fetch` at the source root, so it can only reproduce a contract whose workspace IS the source root. contracts/ is therefore built as its own tree (a standalone repository would be the natural home). The engine reads build output from a fixed path and does not pass --manifest-path to `cargo fetch`; see HACKATHON.md."
+  "_note": "NOTE: the Sorofy engine reads the built wasm from <source root>/target and runs `cargo fetch` at the source root, so it can only reproduce a contract whose workspace IS the source root. contracts/ is therefore built as its own tree (a standalone repository would be the natural home). The engine reads build output from a fixed path and does not pass --manifest-path to `cargo fetch`; see HACKATHON.md. The registry was built the same way as the token: contracts/ as the source root, --package selecting one contract, in the pinned image. Both registry instances hold identical on-chain bytes (checked with `stellar contract fetch`)."
 }
