@@ -6,7 +6,7 @@
 # no business in either.
 [workspace]
 resolver = "2"
-members = ["vrfy-token"]
+members = ["vrfy-token", "registry"]
 
 [workspace.package]
 edition = "2021"
