@@ -10,19 +10,23 @@
 
 ## The short version
 
-The Instawards SOW declared four things out of scope by name: **multi-verifier /
-decentralisation, an on-chain registry contract, mainnet + audit, and explorer/wallet UI**
+The Instawards SOW declared five things out of scope by name: **multi-verifier /
+decentralisation, an on-chain registry contract, mainnet + audit, explorer/wallet UI, and
+guaranteed determinism across all contracts**
 ([testnet-roadmap.md](testnet-roadmap.md)).
 
-**This hackathon built the first two of those four.** That is the whole claim of the delta: it
-closes the gap between what the funded SOW delivered and what the SCF M2 milestone asks for —
-not as a prototype in a branch, but as a registry contract deployed to testnet with a live
-verdict anyone can read without an account.
+**This hackathon built the first two of those five.** That is the whole claim of the delta: it
+closes *most* of the gap between what the funded SOW delivered and what the SCF M2 milestone
+asks for — a registry contract deployed to testnet with a live verdict anyone can read without
+an account, not a prototype in a branch. One piece stays open, and it is named below: **follower
+mode**.
 
 ## Where each milestone actually stands
 
-SCF milestone names and tranche structure from the RFP track (Build Award cap **$150K XLM**,
-tranches **10 / 20 / 30 / 40** at acceptance / MVP / testnet / mainnet).
+SCF milestone names from the RFP track. Build Award cap (**up to $150,000 worth of XLM**) and
+tranche structure (**10 / 20 / 30 / 40** at award acceptance / MVP / testnet / mainnet launch)
+from the SCF handbook,
+[Budget and deliverable guidelines](https://stellar.gitbook.io/scf-handbook/scf-awards/build-award/budget-and-deliverable-guidelines).
 
 | SCF milestone | What it asks for | Status | What delivered it |
 |---|---|---|---|
@@ -66,7 +70,7 @@ Two entries changed:
 
 Recorded rather than guessed.
 
-- **Which SCF round is open.** The pre-hackathon brief flags rounds #43 and #44 as conflicting and says to clarify via the interest form. Not resolved here — an attempt to read `communityfund.stellar.org/awards` during this session was blocked before the page loaded. **How to settle it:** the SCF interest form at [communityfund.stellar.org](https://communityfund.stellar.org/awards), which is also where a referral code would be attached.
+- **Which SCF round is open.** The pre-hackathon brief flags rounds #43 and #44 as conflicting and says to clarify via the interest form. Not resolved here — an attempt to read `communityfund.stellar.org/awards` during this session was blocked before the page loaded. **How to settle it:** the SCF interest form at [communityfund.stellar.org](https://communityfund.stellar.org/awards), which is also where a referral code would be attached. **Indicative, not confirmed:** the handbook and public sources put rounds at roughly six-week intervals with SCF #41 closing 2026-02-01, which would place #43 and #44 months in the past by today — so the brief's "#43 vs #44" is more likely *stale* than genuinely ambiguous. That was not read from the source of truth: `communityfund.stellar.org` does not resolve from this machine (`getaddrinfo ENOTFOUND`, re-checked 2026-09-20).
 - **Whether the Blend v2 team would accept a gated deposit path.** No contact has been made. The integration is ours, built against their public interface; it is not a partnership and is not presented as one.
 
 ## What this roadmap deliberately does not promise
