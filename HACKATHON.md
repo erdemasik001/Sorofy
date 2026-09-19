@@ -18,12 +18,17 @@ on-chain.*
 |---|---|---|
 | Verifiers | A single operator's instance; no verifier identity | Accounts that stake VRFY become verifiers; several instances run |
 | Result storage | The operator's SQLite file | API DB **and** a Soroban registry contract |
-| Wrong result | Nothing happens | The verifier's stake is burned by a permissionless `slash` |
-| Result checkable without trusting the operator | No | Yes — read the attestations on-chain |
+| A dishonest verifier | Indistinguishable from an honest one | Cannot show a green result alone (any dissent ⇒ `Disputed`); loses stake if outvoted |
+| Result checkable without trusting the operator | No | Yes — read the attestations on-chain, rebuild yourself |
+| How other verifiers get work | n/a | *Follower mode*: re-verify what the public feed lists, expected hash resolved from their own RPC |
 | Job submission | One shared bearer token | Unchanged until the SEP-10 step |
 
+The design in one line per layer: **truth** = deterministic rebuild anyone can repeat;
+**visibility** = conservative consensus; **deterrence** = majority-based slash, burned.
+
 Full design, the slash rule and its alternatives, and the honest limits:
-**[docs/hackathon-design.md](docs/hackathon-design.md)**.
+**[docs/hackathon-design.md](docs/hackathon-design.md)**. Verifier reward economics, as a
+*projection only*: **[docs/verifier-economics.md](docs/verifier-economics.md)**.
 
 ## Status
 
@@ -31,12 +36,12 @@ Full design, the slash rule and its alternatives, and the honest limits:
 |---|---|---|
 | 0 | Repository discovery, contradictions with the plan reported | ✅ done |
 | 1 | Toolchain (Rust 1.91.1, `wasm32v1-none`, stellar-cli 28.0.0, Docker via OrbStack) and four funded testnet identities; sample contract built, deployed, invoked | ✅ done |
-| 2 | Design document | ✍️ drafted, awaiting review |
+| 2 | Design document, reward-economics projection | ✍️ revised, awaiting approval |
 | 3 | VRFY token (SEP-41) | ⏳ not started |
-| 4 | Registry contract | ⏳ not started |
-| 5 | API attestation path (flagged, asynchronous) | ⏳ not started |
-| 6 | Three verifiers and a slash demo script | ⏳ not started |
-| 7 | Explorer rows for stakes and attestations; token-free read path | ⏳ not started |
+| 4 | Registry contract: stake, attest, conservative consensus, slash | ⏳ not started |
+| 5 | API attestation path (flagged, asynchronous) and follower mode | ⏳ not started |
+| 6 | Three verifiers (two following the first) and a slash demo script | ⏳ not started |
+| 7 | Explorer rows for stakes and attestations; token-free read path. *Bonus, only after the core works:* a clearly labelled "projected rewards" panel | ⏳ not started |
 | 8 | SEP-1 / SEP-10 | ⏳ not started |
 | 9 | Production deploy | ⏳ only on explicit go-ahead, with a written rollback plan first |
 | 10 | Final docs, architecture diagram, pitch on the official template | ⏳ not started |
@@ -62,6 +67,17 @@ like them to be.
 | Core feature | ✅ by design: staking and attestation are the multi-verifier requirement of the funded RFP |
 | Scale-track extras: architecture diagram, post-hackathon roadmap toward SCF/InstAward | ⏳ STEP 10 |
 
+## Not implemented, by decision
+
+Stated up front so nothing above is read as more than it is:
+
+- **No verifier rewards.** Staking earns nothing in this build. The reward model is a
+  projection ([docs/verifier-economics.md](docs/verifier-economics.md)); no funding is assumed.
+- **No economic security.** VRFY is a worthless testnet token. This is a proof of mechanism.
+- **No independent operators** unless one actually joins during the event; if so it is recorded
+  here, otherwise nothing is claimed.
+- **No fiat rail, SEP-6, credit system or mainnet.**
+
 ## Stellar skill files used
 
 None cited yet. Each will be listed here, by path, when it is actually consulted during
@@ -77,4 +93,6 @@ built.
 
 ## Delta log
 
-- **2026-09-19** — Steps 0–1 done. Design drafted ([docs/hackathon-design.md](docs/hackathon-design.md)).
+- **2026-09-19** — Steps 0–1 done. Design drafted ([docs/hackathon-design.md](docs/hackathon-design.md)),
+  then revised: three-layer model, conservative consensus, follower mode, slash burned rather
+  than redistributed, and a reward-economics projection.
