@@ -1,0 +1,50 @@
+{
+  "_comment": "Public data only: contract ids, hashes, public keys, transaction hashes. No secrets. Testnet.",
+  "network": {
+    "name": "testnet",
+    "passphrase": "Test SDF Network ; September 2015",
+    "rpc": "https://soroban-testnet.stellar.org"
+  },
+  "accounts": {
+    "admin": "GA4WX6KW4BS2KDGM6C7QFGCK4MILBHJBW36CL7KKGHBDFQG7ZLXKQXK2",
+    "verifier_a": "GAUNIN5OOJJDWPLCIINMXHKUKIAUGQZZ3YQMWOTHULFB2VFVOPSIDCHD",
+    "verifier_b": "GA45HAT5YNRNWVDJPI7ALCX3USIUTGZETPLKN3O26UTHLTKITLST4MAT",
+    "verifier_c": "GAI4ODUMJNAXFSQXIV3SCB3SWDHRAA6RIO4B3WDWF2P2GKSKIQZDM7OR"
+  },
+  "contracts": {
+    "vrfy_token": {
+      "id": "CCM2LLD2TAFOMQQUQK62DHCEWNO7UEYOWDXL52GF3KTDK4NMBT6HKEDW",
+      "cli_alias": "vrfy_token",
+      "standard": "SEP-41",
+      "name": "Sorofy Verifier Token",
+      "symbol": "VRFY",
+      "decimals": 7,
+      "admin": "GA4WX6KW4BS2KDGM6C7QFGCK4MILBHJBW36CL7KKGHBDFQG7ZLXKQXK2",
+      "wasm_sha256": "3e23ccf50f1a28a568229e21eddc2f11ea6ee495ebe2c3736e545d054be59028",
+      "wasm_size": 8576,
+      "build": {
+        "bldimg": "ghcr.io/erdemasik001/sorofy-build-image@sha256:cff44167d2ee90f901c768ccdb75eb5c382c95295f44bcd7ee4b543f0adf9588",
+        "bldopt": [
+          "--package=vrfy-token"
+        ],
+        "source_root": "contracts/ (the tree is the source root; see NOTE)",
+        "source_sha256_staged_tree": "47a88a77289c02370d0f04995e6faadcea4f5fb081981ff5ee48762804c0f306",
+        "from_commit": "24bce3b",
+        "reproduced_by_sorofy": "VERIFIED against the on-chain hash, 65.6 s, twice with the same hash"
+      },
+      "txs": {
+        "upload_wasm": "c6a1d6838a02ce417af12c20570c5edc0ae895ba5c0bb855145f380c582655d7",
+        "deploy": "8df956c09bc16b3b27d2c2bc304284b38354596a49b3d0e04587f4b2023e4f56",
+        "mint_verifier_a": "2ec63a168fbaba22049a933a401a3de3d739ff5278e60bb505c25b99f01d110c",
+        "mint_verifier_b": "825c83e39755da5659089af0831cbd7fda958dc686aa8575f3b4b7f3f351130c",
+        "mint_verifier_c": "0e5953139ac9f155168bd25ab30313933094df13a1d296eafb66c13f05752f46",
+        "transfer_a_to_b_250": "7e934a4a148649d67e85218e3537bc92d3261404fda5f06115a9362a23e8732e",
+        "transfer_b_to_a_250": "40716de61bc7dd7612db9c1743e202b66650b9a373db8fa272393b9a3e456d3c",
+        "mint_admin_5": "60c37e918bc0d126aa2d4f467f2c1bcae7ea0bbf9a1eac49be3a51faf9375319",
+        "burn_admin_1": "ca3469d101f0faff3fae9dc97fd6b592cf5856fb83d95c6a5c01191ab506b7e4"
+      }
+    },
+    "registry": null
+  },
+  "_note": "NOTE: the Sorofy engine reads the built wasm from <source root>/target and runs `cargo fetch` at the source root, so it can only reproduce a contract whose workspace IS the source root. contracts/ is therefore built as its own tree (a standalone repository would be the natural home). The engine reads build output from a fixed path and does not pass --manifest-path to `cargo fetch`; see HACKATHON.md."
+}

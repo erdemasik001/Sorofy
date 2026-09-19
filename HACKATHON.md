@@ -37,7 +37,7 @@ Full design, the slash rule and its alternatives, and the honest limits:
 | 0 | Repository discovery, contradictions with the plan reported | ✅ done |
 | 1 | Toolchain (Rust 1.91.1, `wasm32v1-none`, stellar-cli 28.0.0, Docker via OrbStack) and four funded testnet identities; sample contract built, deployed, invoked | ✅ done |
 | 2 | Design document, reward-economics projection | ✍️ revised, awaiting approval |
-| 3 | VRFY token (SEP-41) | ⏳ not started |
+| 3 | VRFY token (SEP-41): deployed to testnet, minted to the three verifier accounts, transfer/balance/burn checked with the CLI | ✅ done |
 | 4 | Registry contract: stake, attest, conservative consensus, slash | ⏳ not started |
 | 5 | API attestation path (flagged, asynchronous) and follower mode | ⏳ not started |
 | 6 | Three verifiers (two following the first) and a slash demo script | ⏳ not started |
@@ -50,10 +50,11 @@ Full design, the slash rule and its alternatives, and the honest limits:
 
 | Artifact | Contract ID | Note |
 |---|---|---|
-| VRFY token | — | not deployed yet |
+| VRFY token (SEP-41) | [`CCM2LLD2…HKEDW`](https://stellar.expert/explorer/testnet/contract/CCM2LLD2TAFOMQQUQK62DHCEWNO7UEYOWDXL52GF3KTDK4NMBT6HKEDW) | Soroban standard token example, pinned upstream commit, see [NOTICE](contracts/vrfy-token/NOTICE.md). wasm `3e23ccf5…`, built in the pinned image and **reproduced by Sorofy's own engine** (`VERIFIED` against the on-chain hash) |
 | Registry | — | not deployed yet |
 
-Contract IDs will live in one configuration file (STEP 3) and be copied here.
+All contract IDs, hashes and transaction hashes live in one file:
+[`contracts/deployments/testnet.json`](contracts/deployments/testnet.json) (public data only).
 
 ## Handbook requirements — where we stand
 
@@ -83,6 +84,23 @@ Stated up front so nothing above is read as more than it is:
 None cited yet. Each will be listed here, by path, when it is actually consulted during
 development, as the handbook requires.
 
+Reference material consulted so far (spec and docs pages, *not* skill files): SEP-41
+([`ecosystem/sep-0041.md`](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0041.md),
+v0.5.2) and the Soroban token example
+([`stellar/soroban-examples/token`](https://github.com/stellar/soroban-examples/tree/main/token)).
+
+## Findings along the way
+
+- **The engine cannot verify a contract that lives in a subdirectory.** It reads the built
+  wasm from a fixed `<source root>/target/wasm32v1-none/release`, and runs `cargo fetch
+  --locked` at the source root without the `--manifest-path` a SEP-58 `bldopt` may carry.
+  Read from the code; not yet demonstrated with a failing run. Not fixed here: it is the live
+  service's engine and out of this delta's scope. The contracts are built as a tree whose
+  root *is* the workspace, which the engine handles.
+- **A build's bytes depend on the CLI that built it.** The same source built with the local
+  stellar-cli 28.0.0 (`b8836ea6…`, optimised) and with the pinned image's 23.2.1
+  (`3e23ccf5…`) differ. Only the second is reproducible by Sorofy, so that is what is deployed.
+
 ## Relationship to the existing roadmap
 
 [docs/testnet-roadmap.md](docs/testnet-roadmap.md) describes Phase 3 (multi-verifier) as
@@ -96,3 +114,7 @@ built.
 - **2026-09-19** — Steps 0–1 done. Design drafted ([docs/hackathon-design.md](docs/hackathon-design.md)),
   then revised: three-layer model, conservative consensus, follower mode, slash burned rather
   than redistributed, and a reward-economics projection.
+- **2026-09-19** — Step 3 done. VRFY token deployed and seeded with 10,000 VRFY per verifier.
+  Root workspace test baseline recorded before touching the API: 60 passed, 0 failed, 9 ignored
+  (the ignored ones need Docker, the pinned image and the network).
+  Cold build of the token in the pinned image on this Mac (amd64 under Rosetta): 62–66 s.
