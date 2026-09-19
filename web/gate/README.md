@@ -15,6 +15,7 @@ node --test test/*.test.js
 ```
 
 Static files and two pinned CDN modules — no build step, no install, no framework.
+`serve.py` is threaded on purpose: `python3 -m http.server` serves one connection at a time and drops modules on a cold load.
 
 ## Where it lives, and why
 

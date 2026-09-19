@@ -9,7 +9,6 @@ will not load from `file://`. That is the whole reason this exists.
 
 import functools
 import http.server
-import socketserver
 import sys
 from pathlib import Path
 
@@ -28,10 +27,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         sys.stderr.write("  %s\n" % (fmt % args))
 
 
+class Server(http.server.ThreadingHTTPServer):
+    # Threaded so that one connection cannot block the others: a browser opens several sockets
+    # for the page's thirteen ES modules and does not always send a request on each one right
+    # away, and a single-threaded server waits on that idle socket while the modules behind it
+    # time out — a blank gate on the first load, fine on reload, which is the worst way to lose
+    # a demo.
+    daemon_threads = True
+
+
 if __name__ == "__main__":
-    socketserver.TCPServer.allow_reuse_address = True
     handler = functools.partial(Handler, directory=str(HERE))
-    with socketserver.TCPServer(("127.0.0.1", PORT), handler) as httpd:
+    with Server(("127.0.0.1", PORT), handler) as httpd:
         print(f"Sorofy gate → http://127.0.0.1:{PORT}/")
         print("Ctrl-C to stop.")
         try:
