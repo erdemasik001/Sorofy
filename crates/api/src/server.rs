@@ -20,6 +20,7 @@ use serde::Deserialize;
 use tokio::sync::Semaphore;
 use verifier_core::{reproduce, Docker, ReproductionRequest, SourceRef, VerificationResult};
 
+use crate::attest::Attestor;
 use crate::db::{Db, JobStatus};
 use crate::rpc::{self, OnChainExecutable};
 
@@ -203,6 +204,9 @@ pub struct AppState {
     rate_limiter: RateLimiter,
     /// Process-lifetime job counters, served at `GET /metrics` (roadmap 0.4).
     metrics: Metrics,
+    /// On-chain attestation (hackathon STEP 5). Disabled unless `main` switches it on, and
+    /// disabled is a no-op handle, not a branch inside the job path.
+    attestor: Attestor,
 }
 
 impl AppState {
@@ -227,7 +231,17 @@ impl AppState {
                 MAX_TRACKED_CLIENTS,
             ),
             metrics: Metrics::default(),
+            attestor: Attestor::disabled(),
         }
+    }
+
+    /// Switch on the attestation path (hackathon STEP 5).
+    ///
+    /// A builder rather than another argument to `new`: with `SOROFY_ATTEST` unset nothing
+    /// calls this, and the constructor every existing caller and test uses is unchanged.
+    pub fn with_attestor(mut self, attestor: Attestor) -> Self {
+        self.attestor = attestor;
+        self
     }
 }
 
@@ -767,6 +781,8 @@ fn parse_source(req: &VerifyRequest) -> Result<SourceRef, ApiError> {
 /// `_admission` is the admission-control permit from `start_verification`; holding
 /// it for the whole job (until this function returns) is what makes an admission
 /// slot free up only once the job is fully done, not when it was merely accepted.
+/// It stays owned by this function — nothing here may move or clone it into another
+/// task, or a slot would be held by work that is not the job.
 async fn run_job(
     state: AppState,
     id: i64,
@@ -792,10 +808,15 @@ async fn run_job(
             };
             let build_seconds = report.build_seconds;
             let report_json = serde_json::to_value(&report).expect("report serializes");
-            (
-                (outcome, Some(build_seconds)),
-                state.db.complete(id, status, &report_json),
-            )
+            let recorded = state.db.complete(id, status, &report_json);
+            // The on-chain half (hackathon STEP 5), and only when the flag is on. This is a
+            // single SQLite insert into the `attestations` outbox — a detached worker does
+            // the RPC — so the job's build slot is already gone and the admission permit is
+            // released the moment this function returns, whatever the registry later says.
+            // A job that *errored* never gets here: an error says nothing about the
+            // contract, so it is never attested.
+            state.attestor.enqueue(id, &report);
+            ((outcome, Some(build_seconds)), recorded)
         }
         Ok(Err(engine_err)) => (
             (Outcome::Errored, None),
@@ -1225,6 +1246,90 @@ mod tests {
             true,
             None,
         )
+    }
+
+    /// A job that fails before any build: `reproduce` refuses an unpinned image up front, so
+    /// this drives the real `run_job` without Docker, the network, or a container.
+    fn unbuildable_job() -> ReproductionRequest {
+        ReproductionRequest {
+            source: SourceRef::Git {
+                repo: "https://example.com/x.git".into(),
+                rev: "abc".into(),
+            },
+            bldimg: "ghcr.io/example/image:latest".into(),
+            bldopt: Vec::new(),
+            expected_wasm_sha256: "aa".repeat(32),
+            timeout: verifier_core::DEFAULT_TIMEOUT,
+            // The refusal this leans on: a tag with no digest, and no permission to accept one.
+            allow_unpinned_image: false,
+            emit_wasm: None,
+        }
+    }
+
+    /// A job `error` says nothing about the contract — the source could not be fetched, the
+    /// image was wrong, the box ran out of disk. Attesting one would file a claim about
+    /// Sorofy's infrastructure, so the attestation path is reached only from the arm that has
+    /// a report in hand.
+    #[tokio::test]
+    async fn a_job_that_errors_is_never_attested() {
+        let db = Db::open_in_memory().expect("in-memory db");
+        let state = AppState::new(
+            db.clone(),
+            Docker::autodetect(),
+            "http://rpc.invalid".into(),
+            false,
+            None,
+        )
+        .with_attestor(crate::attest::Attestor::queue_only(db.clone()));
+        assert!(state.attestor.is_enabled(), "the flag is on for this test");
+
+        let id = db
+            .insert_pending(None, &"aa".repeat(32), &serde_json::json!({}), "img")
+            .expect("pending row");
+        let admission = state
+            .admission
+            .clone()
+            .try_acquire_owned()
+            .expect("a slot is free");
+        run_job(state.clone(), id, unbuildable_job(), admission).await;
+
+        assert_eq!(db.get(id).unwrap().expect("row").status, JobStatus::Error);
+        assert!(
+            db.attestation_for(id).unwrap().is_none(),
+            "an errored job must not reach the outbox"
+        );
+    }
+
+    /// The attestation path must not extend a job's hold on the queue. Everything it does
+    /// inside `run_job` is one SQLite insert; the transaction happens on a worker that owns no
+    /// permit, so the slot is free the moment the job itself is done.
+    #[tokio::test]
+    async fn the_admission_slot_is_released_when_the_job_ends_attested_or_not() {
+        let db = Db::open_in_memory().expect("in-memory db");
+        let state = AppState::new(
+            db.clone(),
+            Docker::autodetect(),
+            "http://rpc.invalid".into(),
+            false,
+            None,
+        )
+        .with_attestor(crate::attest::Attestor::queue_only(db.clone()));
+
+        let id = db
+            .insert_pending(None, &"aa".repeat(32), &serde_json::json!({}), "img")
+            .expect("pending row");
+        let admission = state.admission.clone().try_acquire_owned().unwrap();
+        assert_eq!(
+            state.admission.available_permits(),
+            MAX_OUTSTANDING_JOBS - 1
+        );
+
+        run_job(state.clone(), id, unbuildable_job(), admission).await;
+
+        // Nothing kept a copy of the permit — had it been moved into a spawned task, this
+        // would still be short by one while that task waited on the network.
+        assert_eq!(state.admission.available_permits(), MAX_OUTSTANDING_JOBS);
+        assert_eq!(state.build_slots.available_permits(), MAX_CONCURRENT_BUILDS);
     }
 
     #[tokio::test]

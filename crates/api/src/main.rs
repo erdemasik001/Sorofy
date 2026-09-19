@@ -10,7 +10,17 @@
 //! - `SOROFY_BACKUP_DIR` — if set, periodically snapshot the cache into this
 //!   directory (unset ⇒ no backups)
 //! - `SOROFY_BACKUP_INTERVAL_HOURS` — how often to snapshot, default 24
+//!
+//! On-chain attestation (hackathon STEP 5) — off unless the first of these is set:
+//! - `SOROFY_ATTEST=1` — file each finished verification with the verifier registry
+//! - `SOROFY_ATTEST_KEY_FILE` — file holding this verifier's `S…` secret key (required)
+//! - `SOROFY_REGISTRY_CONTRACT_ID` — the registry to attest to (required)
+//! - `SOROFY_ATTEST_CONFIG_HOME` — this instance's private stellar-cli keystore,
+//!   default `<SOROFY_DB>.stellar`. **One per instance**, never shared
+//! - `SOROFY_NETWORK_PASSPHRASE` — default testnet
+//! - `SOROFY_STELLAR_CLI` — the `stellar` binary, default `stellar` on `PATH`
 
+use api::attest::{AttestConfig, Attestor, Signer, TESTNET_PASSPHRASE};
 use api::db::Db;
 use api::server::{router, AppState};
 use verifier_core::Docker;
@@ -55,9 +65,18 @@ async fn main() -> anyhow::Result<()> {
     if let Ok(dir) = std::env::var("SOROFY_BACKUP_DIR") {
         spawn_periodic_backup(db.clone(), std::path::PathBuf::from(dir));
     }
-    let state = AppState::new(db, docker, rpc_url.clone(), allow_unpinned, api_token);
+    // Before the listener opens: a service told to attest but wired wrongly should refuse to
+    // start, not run for an hour and then log its first failure.
+    let attestor = match attestation_config(&|name| std::env::var(name).ok(), &db_path, &rpc_url)? {
+        Some(config) => Attestor::start(config, db.clone()),
+        None => Attestor::disabled(),
+    };
+    let state = AppState::new(db, docker, rpc_url.clone(), allow_unpinned, api_token)
+        .with_attestor(attestor);
 
     let auth_enabled = state.api_token.is_some();
+    // Nothing secret in this line: the attestation key is not here, is not in the state, and
+    // is not in anything either of them can print.
     tracing::info!(%bind, db = %db_path, rpc = %rpc_url, allow_unpinned, auth = auth_enabled, "sorofy-api listening");
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     axum::serve(listener, router(state))
@@ -65,6 +84,57 @@ async fn main() -> anyhow::Result<()> {
         .await?;
     tracing::info!("shutdown complete");
     Ok(())
+}
+
+/// Resolve the attestation path from the environment, or `None` when the flag is off.
+///
+/// `SOROFY_ATTEST=1` follows the convention of the other booleans here. With it unset this
+/// returns **before reading anything else**, so an instance that is not attesting needs no
+/// key, no registry, and no `stellar` binary on its PATH — and behaves exactly as it did
+/// before STEP 5. With it set every piece is required, and a missing one is a startup failure:
+/// a service told to attest and unable to is a misconfiguration, not a degraded mode.
+///
+/// `env` is the lookup rather than `std::env::var` directly, so the flag's semantics can be
+/// tested without a test mutating the process environment out from under its neighbours.
+fn attestation_config(
+    env: &dyn Fn(&str) -> Option<String>,
+    db_path: &str,
+    rpc_url: &str,
+) -> anyhow::Result<Option<AttestConfig>> {
+    if env("SOROFY_ATTEST").as_deref() != Some("1") {
+        return Ok(None);
+    }
+    let required = |name: &str| {
+        env(name)
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("SOROFY_ATTEST=1 needs {name} to be set"))
+    };
+    let key_file = std::path::PathBuf::from(required("SOROFY_ATTEST_KEY_FILE")?);
+    let registry_id = required("SOROFY_REGISTRY_CONTRACT_ID")?;
+    let cli =
+        std::path::PathBuf::from(env("SOROFY_STELLAR_CLI").unwrap_or_else(|| "stellar".into()));
+    // Derived from the database path by default, because the database is already what makes
+    // one instance distinct from another; two instances sharing a keystore is the failure
+    // this default exists to avoid.
+    let config_home = std::path::PathBuf::from(
+        env("SOROFY_ATTEST_CONFIG_HOME").unwrap_or_else(|| format!("{db_path}.stellar")),
+    );
+
+    let signer = Signer::provision(&cli, &key_file, &config_home)?;
+    tracing::info!(
+        registry = %registry_id,
+        verifier = %signer.address,
+        keystore = %config_home.display(),
+        "attestation enabled; results will be filed on-chain"
+    );
+    Ok(Some(AttestConfig {
+        cli,
+        registry_id,
+        rpc_url: rpc_url.to_string(),
+        network_passphrase: env("SOROFY_NETWORK_PASSPHRASE")
+            .unwrap_or_else(|| TESTNET_PASSPHRASE.into()),
+        signer,
+    }))
 }
 
 /// Reason recorded on jobs a previous process left mid-flight.
@@ -161,4 +231,98 @@ fn spawn_periodic_backup(db: Db, dir: std::path::PathBuf) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    type ReadLog = Rc<RefCell<Vec<String>>>;
+
+    /// A stand-in environment that remembers which names were asked for.
+    fn env_of<'a>(
+        pairs: &'a [(&'a str, &'a str)],
+    ) -> (impl Fn(&str) -> Option<String> + 'a, ReadLog) {
+        let log: ReadLog = Rc::new(RefCell::new(Vec::new()));
+        let seen = log.clone();
+        let lookup = move |name: &str| {
+            seen.borrow_mut().push(name.to_string());
+            pairs
+                .iter()
+                .find(|(k, _)| *k == name)
+                .map(|(_, v)| v.to_string())
+        };
+        (lookup, log)
+    }
+
+    /// The default. Nothing beyond the flag is even consulted — which is what lets an instance
+    /// that is not attesting run with no key and no registry configured at all.
+    #[test]
+    fn attestation_is_off_unless_the_flag_says_exactly_one() {
+        for flag in [None, Some("0"), Some(""), Some("true"), Some("yes")] {
+            let pairs: Vec<(&str, &str)> =
+                flag.map(|v| vec![("SOROFY_ATTEST", v)]).unwrap_or_default();
+            let (env, read) = env_of(&pairs);
+
+            let config = attestation_config(&env, "sorofy.db", "http://rpc.invalid")
+                .expect("an unset flag is not an error");
+            assert!(
+                config.is_none(),
+                "SOROFY_ATTEST={flag:?} must not enable attestation"
+            );
+            assert_eq!(
+                read.borrow().as_slice(),
+                ["SOROFY_ATTEST"],
+                "nothing else may be read when the flag is off"
+            );
+        }
+    }
+
+    /// Told to attest but not told how: refuse at startup, naming what is missing.
+    #[test]
+    fn the_flag_without_its_settings_is_a_startup_failure() {
+        for (pairs, missing) in [
+            (vec![("SOROFY_ATTEST", "1")], "SOROFY_ATTEST_KEY_FILE"),
+            (
+                vec![("SOROFY_ATTEST", "1"), ("SOROFY_ATTEST_KEY_FILE", "/tmp/k")],
+                "SOROFY_REGISTRY_CONTRACT_ID",
+            ),
+            // Set but empty is the same as unset, as elsewhere in this file.
+            (
+                vec![
+                    ("SOROFY_ATTEST", "1"),
+                    ("SOROFY_ATTEST_KEY_FILE", ""),
+                    ("SOROFY_REGISTRY_CONTRACT_ID", "CA4V"),
+                ],
+                "SOROFY_ATTEST_KEY_FILE",
+            ),
+        ] {
+            let (env, _) = env_of(&pairs);
+            // `AttestConfig` is deliberately not `Debug` — nothing that holds the signer
+            // should be printable by accident — so this matches rather than `expect_err`s.
+            let err = match attestation_config(&env, "sorofy.db", "http://rpc.invalid") {
+                Ok(_) => panic!("an incomplete configuration must not start"),
+                Err(e) => e,
+            };
+            assert!(format!("{err:#}").contains(missing), "unhelpful: {err:#}");
+        }
+    }
+
+    /// A key file that is not there stops startup too, and the error names the path — the one
+    /// thing about that file which is safe to print.
+    #[test]
+    fn a_missing_key_file_stops_startup_and_names_the_path() {
+        let (env, _) = env_of(&[
+            ("SOROFY_ATTEST", "1"),
+            ("SOROFY_ATTEST_KEY_FILE", "/nonexistent/sorofy-verifier.key"),
+            ("SOROFY_REGISTRY_CONTRACT_ID", "CA4V"),
+        ]);
+        let err = match attestation_config(&env, "sorofy.db", "http://rpc.invalid") {
+            Ok(_) => panic!("a key file that does not exist must not start"),
+            Err(e) => format!("{e:#}"),
+        };
+        assert!(err.contains("/nonexistent/sorofy-verifier.key"), "{err}");
+    }
 }

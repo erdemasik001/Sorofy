@@ -21,6 +21,8 @@ stellar-xdr = { version = "27.0.0", features = ["base64", "serde"] }
 stellar-strkey = "0.0.18"
 ureq = { workspace = true, features = ["json"] }
 hex.workspace = true
+# The claim digest is computed API-side and must match the registry's byte for byte.
+sha2.workspace = true
 axum = "0.8.9"
 rusqlite = { version = "0.32", features = ["bundled"] }
 # axum REST layer is added in Day2.

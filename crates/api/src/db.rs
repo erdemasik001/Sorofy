@@ -1,8 +1,16 @@
 //! Verification result cache (PLAN Day2 item 3).
 //!
-//! One table, append-only in spirit: every verification job is a row, and a
-//! lookup returns the newest row for a contract id or wasm hash. SQLite because
+//! Append-only in spirit: every verification job is a row in `verifications`, and
+//! a lookup returns the newest row for a contract id or wasm hash. SQLite because
 //! the deploy target is a single node and a single file is the whole ops story.
+//!
+//! `attestations` (hackathon STEP 5) is the outbox for the on-chain half: one row
+//! per verification we intend to attest, carrying its own status, attempt count
+//! and retry schedule. It is a *separate table* rather than columns on
+//! `verifications` for two reasons — a retry needs state of its own, and
+//! [`Db::fail_orphaned_pending`] sweeps `verifications` at startup, so an
+//! attestation queued before a restart must not be caught by it. It is retried
+//! instead (docs/hackathon-design.md §9).
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -67,6 +75,65 @@ pub struct VerificationRow {
     pub updated_at: String,
 }
 
+/// Lifecycle of one queued attestation.
+///
+/// Three states and no fourth, because each has to be true of the ledger as well as of this
+/// table: either we have not landed a transaction yet, or we have one and can name it, or the
+/// registry refused in a way that will not change on a retry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttestationStatus {
+    /// Queued, or waiting out a backoff after a failure that may yet clear.
+    Pending,
+    /// A transaction landed on-chain; `tx_hash` names it.
+    Submitted,
+    /// The registry refused permanently, or we gave up retrying. `last_error` says which.
+    Rejected,
+}
+
+impl AttestationStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            AttestationStatus::Pending => "pending",
+            AttestationStatus::Submitted => "submitted",
+            AttestationStatus::Rejected => "rejected",
+        }
+    }
+
+    fn parse(s: &str) -> anyhow::Result<Self> {
+        Ok(match s {
+            "pending" => AttestationStatus::Pending,
+            "submitted" => AttestationStatus::Submitted,
+            "rejected" => AttestationStatus::Rejected,
+            other => anyhow::bail!("unknown attestation status in db: {other}"),
+        })
+    }
+}
+
+/// One queued attestation, as stored.
+///
+/// The claim is held here in full rather than recomputed from the verification's report, so a
+/// retry after a restart sends exactly the bytes the first attempt would have.
+#[derive(Debug, Clone, Serialize)]
+pub struct AttestationRow {
+    pub id: i64,
+    pub verification_id: i64,
+    /// The claim, all three lowercase 32-byte hex digests.
+    pub wasm_hash: String,
+    pub input_digest: String,
+    pub rebuilt_hash: String,
+    pub status: AttestationStatus,
+    /// The attest transaction, once one has landed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tx_hash: Option<String>,
+    /// How many times submission has been attempted.
+    pub attempts: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 /// Hard ceiling on rows one [`Db::recent`] call may return.
 ///
 /// Generous for an explorer page, small enough that no single request can pull
@@ -108,6 +175,30 @@ const MIGRATIONS: &[&str] = &[
          ON verifications(wasm_hash);
      CREATE INDEX IF NOT EXISTS idx_verifications_contract_id
          ON verifications(contract_id);",
+    // 2 — the attestation outbox (hackathon STEP 5). Rows are written only when
+    // the attestation path is switched on; with it off the table simply stays
+    // empty, and nothing else in the service reads or writes it.
+    //
+    // `verification_id` is UNIQUE so enqueuing is idempotent: one verification
+    // makes at most one attestation, however many times the path is asked to
+    // queue it. The REFERENCES clause documents the link; SQLite only enforces
+    // it with `PRAGMA foreign_keys=ON`, which this database does not set.
+    "CREATE TABLE IF NOT EXISTS attestations (
+         id              INTEGER PRIMARY KEY,
+         verification_id INTEGER NOT NULL UNIQUE REFERENCES verifications(id),
+         wasm_hash       TEXT NOT NULL,
+         input_digest    TEXT NOT NULL,
+         rebuilt_hash    TEXT NOT NULL,
+         status          TEXT NOT NULL,
+         tx_hash         TEXT,
+         attempts        INTEGER NOT NULL DEFAULT 0,
+         last_error      TEXT,
+         next_attempt_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+         created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+         updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+     );
+     CREATE INDEX IF NOT EXISTS idx_attestations_due
+         ON attestations(status, next_attempt_at);",
 ];
 
 impl Db {
@@ -314,6 +405,147 @@ impl Db {
             .query_row("SELECT COUNT(*) FROM verifications", [], |row| row.get(0))
             .context("counting verifications")
     }
+
+    // ---- the attestation outbox (hackathon STEP 5) ---------------------------------------
+
+    /// Queue an attestation for `verification_id`, due immediately.
+    ///
+    /// Returns the new row id, or `None` if this verification was already queued — which is
+    /// what makes the call safe to repeat. Hashes are stored lowercase, like everywhere else.
+    pub fn enqueue_attestation(
+        &self,
+        verification_id: i64,
+        wasm_hash: &str,
+        input_digest: &str,
+        rebuilt_hash: &str,
+    ) -> anyhow::Result<Option<i64>> {
+        let conn = self.conn();
+        let inserted = conn
+            .execute(
+                "INSERT OR IGNORE INTO attestations
+                     (verification_id, wasm_hash, input_digest, rebuilt_hash, status)
+                 VALUES (?1, ?2, ?3, ?4, 'pending')",
+                params![
+                    verification_id,
+                    wasm_hash.to_lowercase(),
+                    input_digest.to_lowercase(),
+                    rebuilt_hash.to_lowercase(),
+                ],
+            )
+            .context("queueing attestation")?;
+        Ok((inserted > 0).then(|| conn.last_insert_rowid()))
+    }
+
+    /// The oldest attestation whose retry time has arrived, if any.
+    ///
+    /// Ordered by id so a backlog drains in the order it was verified.
+    pub fn due_attestation(&self) -> anyhow::Result<Option<AttestationRow>> {
+        self.conn()
+            .query_row(
+                &format!(
+                    "SELECT {ATTESTATION_COLUMNS} FROM attestations
+                     WHERE status = 'pending'
+                       AND next_attempt_at <= strftime('%Y-%m-%dT%H:%M:%SZ','now')
+                     ORDER BY id LIMIT 1"
+                ),
+                [],
+                attestation_from_sql,
+            )
+            .optional()
+            .context("looking up the next due attestation")
+    }
+
+    /// Seconds until the earliest pending attestation is due, or `None` if none is pending.
+    ///
+    /// Negative when one is already overdue; the caller decides what to do with that. Computed
+    /// in SQLite so the comparison uses the same clock that wrote `next_attempt_at`.
+    pub fn seconds_until_next_attestation(&self) -> anyhow::Result<Option<i64>> {
+        self.conn()
+            .query_row(
+                "SELECT MIN(strftime('%s', next_attempt_at)) - strftime('%s','now')
+                 FROM attestations WHERE status = 'pending'",
+                [],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .context("looking up when the next attestation is due")
+    }
+
+    /// Record that an attest transaction landed on-chain.
+    ///
+    /// `tx_hash` is `None` when the transaction went through but the CLI named no hash we
+    /// could read: the column stays NULL rather than holding a placeholder that would read
+    /// like a real transaction.
+    pub fn attestation_submitted(&self, id: i64, tx_hash: Option<&str>) -> anyhow::Result<()> {
+        self.finish_attestation(id, AttestationStatus::Submitted, tx_hash, None)
+    }
+
+    /// Record a refusal that retrying cannot fix, or a give-up after too many attempts.
+    pub fn attestation_rejected(&self, id: i64, reason: &str) -> anyhow::Result<()> {
+        self.finish_attestation(id, AttestationStatus::Rejected, None, Some(reason))
+    }
+
+    fn finish_attestation(
+        &self,
+        id: i64,
+        status: AttestationStatus,
+        tx_hash: Option<&str>,
+        error: Option<&str>,
+    ) -> anyhow::Result<()> {
+        self.conn()
+            .execute(
+                "UPDATE attestations
+                 SET status = ?2, tx_hash = ?3, last_error = ?4,
+                     attempts = attempts + 1,
+                     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+                 WHERE id = ?1",
+                params![id, status.as_str(), tx_hash, error],
+            )
+            .context("recording attestation outcome")?;
+        Ok(())
+    }
+
+    /// Record a failure that may yet clear, and schedule the next attempt `delay` from now.
+    ///
+    /// Returns the attempt count after the bump, so the caller can decide when to give up.
+    pub fn attestation_retry_later(
+        &self,
+        id: i64,
+        error: &str,
+        delay: std::time::Duration,
+    ) -> anyhow::Result<i64> {
+        let conn = self.conn();
+        conn.execute(
+            "UPDATE attestations
+             SET last_error = ?2,
+                 attempts = attempts + 1,
+                 next_attempt_at =
+                     strftime('%Y-%m-%dT%H:%M:%SZ','now', ?3),
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+             WHERE id = ?1",
+            params![id, error, format!("+{} seconds", delay.as_secs())],
+        )
+        .context("rescheduling attestation")?;
+        conn.query_row(
+            "SELECT attempts FROM attestations WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .context("reading attestation attempt count")
+    }
+
+    /// The attestation queued for a verification, if there is one.
+    pub fn attestation_for(&self, verification_id: i64) -> anyhow::Result<Option<AttestationRow>> {
+        self.conn()
+            .query_row(
+                &format!(
+                    "SELECT {ATTESTATION_COLUMNS} FROM attestations WHERE verification_id = ?1"
+                ),
+                params![verification_id],
+                attestation_from_sql,
+            )
+            .optional()
+            .context("looking up a verification's attestation")
+    }
 }
 
 /// Apply any migrations this database has not seen yet.
@@ -383,9 +615,36 @@ fn row_from_sql(row: &rusqlite::Row<'_>) -> rusqlite::Result<VerificationRow> {
     })
 }
 
+const ATTESTATION_COLUMNS: &str = "id, verification_id, wasm_hash, input_digest, rebuilt_hash, \
+     status, tx_hash, attempts, last_error, created_at, updated_at";
+
+fn attestation_from_sql(row: &rusqlite::Row<'_>) -> rusqlite::Result<AttestationRow> {
+    let status_raw: String = row.get(5)?;
+    Ok(AttestationRow {
+        id: row.get(0)?,
+        verification_id: row.get(1)?,
+        wasm_hash: row.get(2)?,
+        input_digest: row.get(3)?,
+        rebuilt_hash: row.get(4)?,
+        status: AttestationStatus::parse(&status_raw).map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(
+                5,
+                rusqlite::types::Type::Text,
+                format!("{e}").into(),
+            )
+        })?,
+        tx_hash: row.get(6)?,
+        attempts: row.get(7)?,
+        last_error: row.get(8)?,
+        created_at: row.get(9)?,
+        updated_at: row.get(10)?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     fn source() -> serde_json::Value {
         serde_json::json!({"kind": "git", "repo": "https://example.com/x", "rev": "abc"})
@@ -495,6 +754,216 @@ mod tests {
         // The ceiling lives in the query, not in a caller's discipline: asking
         // for everything still yields one page.
         assert_eq!(db.recent(u32::MAX, 0).unwrap().len(), MAX_PAGE as usize);
+    }
+
+    // ---- the attestation outbox ----------------------------------------------------------
+
+    /// A finished verification with an attestation queued against it.
+    fn queued(db: &Db) -> (i64, i64) {
+        let id = db
+            .insert_pending(Some("CQUE"), &"aa".repeat(32), &source(), "img")
+            .unwrap();
+        db.complete(
+            id,
+            JobStatus::Verified,
+            &serde_json::json!({"result": "verified"}),
+        )
+        .unwrap();
+        let attestation = db
+            .enqueue_attestation(id, &"AA".repeat(32), &"BB".repeat(32), &"CC".repeat(32))
+            .unwrap()
+            .expect("queued");
+        (id, attestation)
+    }
+
+    #[test]
+    fn queueing_an_attestation_stores_the_claim_and_is_idempotent() {
+        let db = Db::open_in_memory().unwrap();
+        let (id, attestation) = queued(&db);
+
+        let row = db.attestation_for(id).unwrap().expect("row exists");
+        assert_eq!(row.id, attestation);
+        assert_eq!(row.status, AttestationStatus::Pending);
+        assert_eq!(row.attempts, 0);
+        assert!(row.tx_hash.is_none() && row.last_error.is_none());
+        // Digests are canonicalized on the way in, like every other hash here.
+        assert_eq!(row.wasm_hash, "aa".repeat(32));
+        assert_eq!(row.input_digest, "bb".repeat(32));
+        assert_eq!(row.rebuilt_hash, "cc".repeat(32));
+
+        // A second attempt to queue the same verification adds nothing — which is what makes
+        // the call safe to repeat after a crash, a retry, or a re-verification.
+        assert_eq!(
+            db.enqueue_attestation(id, &"11".repeat(32), &"22".repeat(32), &"33".repeat(32))
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            db.attestation_for(id).unwrap().unwrap().wasm_hash,
+            "aa".repeat(32)
+        );
+    }
+
+    /// The reason attestations live in their own table at all.
+    #[test]
+    fn the_startup_sweep_fails_orphaned_jobs_and_leaves_the_outbox_alone() {
+        let db = Db::open_in_memory().unwrap();
+        let (id, _) = queued(&db);
+        // A job that really was orphaned, so the sweep has something to do.
+        let orphan = db
+            .insert_pending(None, &"dd".repeat(32), &source(), "img")
+            .unwrap();
+
+        assert_eq!(db.fail_orphaned_pending("restarted").unwrap(), 1);
+        assert_eq!(db.get(orphan).unwrap().unwrap().status, JobStatus::Error);
+
+        // The queued attestation is still pending and still due: a restart retries it rather
+        // than failing it (docs/hackathon-design.md §9).
+        let row = db
+            .attestation_for(id)
+            .unwrap()
+            .expect("outbox row survives");
+        assert_eq!(row.status, AttestationStatus::Pending);
+        assert_eq!(db.due_attestation().unwrap().map(|r| r.id), Some(row.id));
+    }
+
+    #[test]
+    fn a_submitted_attestation_records_its_transaction_and_leaves_the_queue() {
+        let db = Db::open_in_memory().unwrap();
+        let (id, attestation) = queued(&db);
+
+        let tx = "b7c50c102cfb435711015c3b23e5e80c18864297ab60befb480d9b0b78fdf85b";
+        db.attestation_submitted(attestation, Some(tx)).unwrap();
+
+        let row = db.attestation_for(id).unwrap().unwrap();
+        assert_eq!(row.status, AttestationStatus::Submitted);
+        assert_eq!(row.tx_hash.as_deref(), Some(tx));
+        assert_eq!(row.attempts, 1, "the successful attempt counts");
+        assert!(db.due_attestation().unwrap().is_none());
+        assert_eq!(db.seconds_until_next_attestation().unwrap(), None);
+    }
+
+    #[test]
+    fn a_transaction_we_could_not_name_is_left_null_rather_than_faked() {
+        let db = Db::open_in_memory().unwrap();
+        let (id, attestation) = queued(&db);
+        db.attestation_submitted(attestation, None).unwrap();
+
+        let row = db.attestation_for(id).unwrap().unwrap();
+        assert_eq!(row.status, AttestationStatus::Submitted);
+        assert_eq!(row.tx_hash, None);
+    }
+
+    #[test]
+    fn a_rejected_attestation_keeps_the_reason_and_is_never_retried() {
+        let db = Db::open_in_memory().unwrap();
+        let (id, attestation) = queued(&db);
+        db.attestation_rejected(attestation, "registry refused: … already attested … (#4)")
+            .unwrap();
+
+        let row = db.attestation_for(id).unwrap().unwrap();
+        assert_eq!(row.status, AttestationStatus::Rejected);
+        assert!(row.last_error.as_deref().unwrap().contains("#4"));
+        assert!(db.due_attestation().unwrap().is_none());
+    }
+
+    #[test]
+    fn a_rescheduled_attestation_is_not_due_until_its_delay_has_passed() {
+        let db = Db::open_in_memory().unwrap();
+        let (id, attestation) = queued(&db);
+        assert!(
+            db.due_attestation().unwrap().is_some(),
+            "due as soon as it is queued"
+        );
+
+        let attempts = db
+            .attestation_retry_later(attestation, "connection closed", Duration::from_secs(60))
+            .unwrap();
+        assert_eq!(attempts, 1);
+
+        assert!(db.due_attestation().unwrap().is_none(), "not due yet");
+        // The worker sleeps on this rather than polling; it must point at the delay just set.
+        let wait = db
+            .seconds_until_next_attestation()
+            .unwrap()
+            .expect("still pending");
+        assert!((1..=60).contains(&wait), "unexpected wait: {wait}s");
+
+        let row = db.attestation_for(id).unwrap().unwrap();
+        assert_eq!(
+            row.status,
+            AttestationStatus::Pending,
+            "a retry is still pending"
+        );
+        assert_eq!(row.last_error.as_deref(), Some("connection closed"));
+
+        // Attempts accumulate across retries, which is what bounds them.
+        assert_eq!(
+            db.attestation_retry_later(attestation, "again", Duration::from_secs(60))
+                .unwrap(),
+            2
+        );
+    }
+
+    #[test]
+    fn a_backlog_drains_in_the_order_it_was_verified() {
+        let db = Db::open_in_memory().unwrap();
+        let mut queued_ids = Vec::new();
+        for n in 0..3 {
+            let id = db
+                .insert_pending(None, &format!("{n:064x}"), &source(), "img")
+                .unwrap();
+            queued_ids.push(
+                db.enqueue_attestation(
+                    id,
+                    &format!("{n:064x}"),
+                    &"bb".repeat(32),
+                    &"cc".repeat(32),
+                )
+                .unwrap()
+                .unwrap(),
+            );
+        }
+        // Oldest first, and each one leaves the queue as it reaches a terminal state.
+        for expected in queued_ids {
+            let due = db.due_attestation().unwrap().expect("one is due");
+            assert_eq!(due.id, expected);
+            db.attestation_submitted(due.id, Some(&"ee".repeat(32)))
+                .unwrap();
+        }
+        assert!(db.due_attestation().unwrap().is_none());
+    }
+
+    #[test]
+    fn an_existing_database_gains_the_outbox_without_losing_its_verifications() {
+        let dir = TempDir::new("outbox-migration");
+        let path = dir.0.join("v1.db");
+
+        // A database from the build before STEP 5: migration 1 applied, and nothing else.
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(&format!(
+                "BEGIN; {} PRAGMA user_version = 1; COMMIT;",
+                MIGRATIONS[0]
+            ))
+            .unwrap();
+            conn.execute(
+                "INSERT INTO verifications (contract_id, wasm_hash, source, bldimg, status)
+                 VALUES ('COLD', 'dead', '{}', 'img', 'verified')",
+                [],
+            )
+            .unwrap();
+        }
+
+        let db = Db::open(&path).unwrap();
+        assert_eq!(db.schema_version().unwrap(), MIGRATIONS.len() as u32);
+        assert!(
+            db.lookup("COLD").unwrap().is_some(),
+            "the old row is untouched"
+        );
+        // The new table is there and empty — an upgraded instance attests nothing it did
+        // before it was told to.
+        assert!(db.due_attestation().unwrap().is_none());
     }
 
     /// A throwaway directory for the on-disk tests; removed on drop.
