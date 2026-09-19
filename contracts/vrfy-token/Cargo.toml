@@ -1,0 +1,17 @@
+[package]
+name = "vrfy-token"
+description = "VRFY — SEP-41 token used as verifier stake (testnet, no value)"
+version = "0.0.6"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+soroban-sdk = { workspace = true }
+soroban-token-sdk = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }

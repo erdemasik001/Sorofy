@@ -1,0 +1,35 @@
+# Soroban contracts for the hackathon delta (see ../HACKATHON.md).
+#
+# A workspace of its own, deliberately NOT a member of the service workspace one level
+# up: the API image is built `--locked` from ../Cargo.toml + ../Cargo.lock, and CI runs
+# `cargo audit` over that lockfile. Contract dependencies (soroban-sdk and friends) have
+# no business in either.
+[workspace]
+resolver = "2"
+members = ["vrfy-token"]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.91.0"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+soroban-sdk = "27.0.0"
+soroban-token-sdk = "27.0.0"
+
+# Profiles only take effect at the workspace root, so the release profile the upstream
+# token example ships in its package manifest lives here. `overflow-checks = true` is a
+# safety property of the contracts, not an optimisation knob: keep it.
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true
+
+[profile.release-with-logs]
+inherits = "release"
+debug-assertions = true
