@@ -46,14 +46,14 @@ piece that is missing. Re-run the test commands with
 | 4 | Registry: stake, attest, conservative consensus, slash. Deployed, walked through end to end | ✅ done | `cd contracts && cargo test` → **46 passed** (registry 35 + token 11); deploy `805bff41…`; rehearsal instance `b209640a…` ([evidence](docs/hackathon-evidence.md)) |
 | 5 | API attestation path (flagged, asynchronous) **and follower mode** | ⚠️ **partly** | Attestation path is built: [`crates/api/src/attest.rs`](crates/api/src/attest.rs), off unless `SOROFY_ATTEST=1`, queueing an `attestations` outbox that a detached worker drains. `cargo test --workspace` → **102 passed, 10 ignored**. **Follower mode is not implemented** — it is specified in [design §8](docs/hackathon-design.md) and has zero hits in `crates/` and `contracts/` |
 | 6 | Three verifiers (two following the first) and a slash demo script | ⚠️ **partly** | Three funded verifier identities staked ([a](https://stellar.expert/explorer/testnet/tx/3f4c460f27a203f08be69628a46ffa987f321b0a14ae6ec40d53ef289d58059a), [b](https://stellar.expert/explorer/testnet/tx/f301789bf99884a6bd75dc0f47abb7176eaba864e53ea20768b37f08f4c7c96c), [c](https://stellar.expert/explorer/testnet/tx/c425aca23602d535ee39ac3ec45495ea15d678a4c5ad52e45fb4145bbbac93dd), 1,000 VRFY each) and attested; the rehearsal registry returns `Verified`, which its `quorum = 3` parameter cannot return on fewer. `slash` burned real VRFY on testnet — [`42c0a240…`](https://stellar.expert/explorer/testnet/tx/42c0a240a4da5ed8a6138e795ff8b64142bc0c2ab785d51f78288ab3bef76035) and [`dca47cc3…`](https://stellar.expert/explorer/testnet/tx/dca47cc36c51954c88fe8fdc27dad4ed29af57951606cb6e9d50e1e077444f44), 500 VRFY each — and the burned amount matched the arithmetic (`29,004 = 29,004`, [evidence §3](docs/hackathon-evidence.md)). **No dedicated slash demo script**, and "two following the first" depends on follower mode, which does not exist |
-| 7 | Explorer rows for stakes and attestations; token-free read path | ⚠️ **partly** | Token-free read path is built and was re-checked live on 2026-09-20: the gate resolves a verdict with no wallet, no account and no token ([web/gate](web/gate/README.md)). **Explorer rows were not built** — zero `stake`/`attest` hits in `crates/api/static/` |
+| 7 | Explorer rows for stakes and attestations; token-free read path | ⚠️ **partly** | Token-free read path is built and was re-checked live on 2026-09-20: the gate resolves a verdict with no wallet, no account and no token — **live at [`sorofy.site/gate/`](https://sorofy.site/gate/)** ([web/gate](web/gate/README.md)). **Explorer rows were not built** — zero `stake`/`attest` hits in `crates/api/static/` |
 | 8 | SEP-1 / SEP-10 | ⚠️ **partly, and rescoped** | Consumed as a **client**: the gate performs SEP-1 discovery, SEP-10 challenge signing and SEP-24 deposit against `testanchor.stellar.org` ([`web/gate/lib/anchor.js`](web/gate/lib/anchor.js)). Sorofy's own API still authenticates job submission with the shared bearer token, so SEP-10 **as a replacement for that** is not done. The "Before → after" row above stays accurate |
 | 9 | Production deploy | ⛔ not done, by decision | Testnet only. No mainnet deploy was attempted and none is claimed |
 | 10 | Final docs, architecture diagram, pitch on the official template | 🔄 in progress | [architecture](docs/hackathon-architecture.md) and [roadmap](docs/hackathon-roadmap.md) delivered; the deck is pending the official template |
 
 ### Checked live, not remembered
 
-Re-run on **2026-09-20** against the live network, read-only, from the gate itself:
+Re-run on **2026-09-20** against the live network, read-only, from the public gate at [`sorofy.site/gate/`](https://sorofy.site/gate/):
 
 | Target | Read | Meaning |
 |---|---|---|
@@ -179,3 +179,10 @@ built.
   Blend v2 as the load-bearing integration, and the reversed anchor decision with the TRY gap
   named. Architecture diagram and SCF roadmap added. Gate re-checked live against testnet:
   VRFY reads `Verified`, the Blend v2 pool reads `NoClaim`.
+- **2026-09-20** — The gate went public. It had only ever run on `127.0.0.1:8081`, which does
+  not satisfy "a publicly accessible application judges can interact with". It is now served at
+  **<https://sorofy.site/gate/>** by the Caddy that already terminates TLS for the API, as static
+  files from `/srv/gate` — no change to `crates/`, no rebuild, no second domain. The existing
+  HSTS header was preserved and measured on both the static and proxied paths. Both verdicts were
+  re-read from the public URL: VRFY `Verified` (1 claim, found via chain events), Blend v2
+  `NoClaim`.

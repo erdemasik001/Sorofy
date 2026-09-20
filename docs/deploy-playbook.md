@@ -170,12 +170,16 @@ docker run -d --name sorofy-api --restart unless-stopped \
   container; the publish above is what limits exposure.
 - Retention for `/data/backups` is the operator's: a cron
   `find /var/lib/docker/volumes/sorofy_data/_data/backups -mtime +30 -delete`.
+- **The tag above is illustrative.** Tags here track the delivery phase, not the crate version
+  (the workspace is still `0.1.0`). The image actually running in production on **2026-09-20**
+  is `sorofy/api:0.7.2` — read with `docker ps`, not from this file. Check before you assume.
 
 ## Step 5 — TLS *(closes G7)*
 
 ```bash
 docker run -d --name caddy --restart unless-stopped --network host \
   -v /etc/caddy/Caddyfile:/etc/caddy/Caddyfile:ro \
+  -v /srv/gate:/srv/gate:ro \
   -v caddy_data:/data \
   caddy:2
 ```
@@ -183,12 +187,39 @@ docker run -d --name caddy --restart unless-stopped --network host \
 ```
 # /etc/caddy/Caddyfile
 sorofy.site {
-    reverse_proxy 127.0.0.1:8080
+    # .site is not HSTS-preloaded (unlike .dev), so the browser-side half of G7
+    # is asserted here: after the first visit a browser will not try plain HTTP.
+    header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+    redir /gate /gate/
+    handle_path /gate/* {
+        root * /srv/gate
+        file_server
+    }
+    handle {
+        reverse_proxy 127.0.0.1:8080
+    }
 }
 ```
 
 Caddy obtains and renews the certificate itself. `--network host` is what lets it
 reach the loopback-published API.
+
+**The `/gate` block serves [`web/gate`](../web/gate/README.md) as static files** (added
+2026-09-20). The gate is a set of ES modules with no build step and only relative imports, so it
+runs unchanged under a path prefix; its CSP travels in its own `<meta>` tag, so nothing here has
+to grant it anything. This is deliberately *not* baked into the API binary — the explorer is, and
+adding a page there would mean editing `crates/api/src/`.
+
+Two things this arrangement is easy to get wrong:
+
+- **The `/gate/*` block must come before the catch-all `handle`.** Caddy evaluates `handle`
+  blocks in order and they are mutually exclusive.
+- **`-v /srv/gate:/srv/gate:ro` is why the container can see the files.** Adding a mount needs
+  the container recreated (`docker rm -f caddy` first); `caddy_data` survives, so no certificate
+  is re-issued. Validate before you recreate — `docker exec caddy caddy validate --config
+  /etc/caddy/Caddyfile` runs against the file the running container already mounts, so a syntax
+  error surfaces while the site is still up.
 
 ## Step 6 — Smoke tests = the Phase 0 quality gate
 
@@ -207,6 +238,8 @@ Run in order; every one must pass before the deploy counts as done.
 | 9 | Re-POST with `wasm_hash` tampered to `1111…` | `mismatch` | correctness |
 | 10 | `docker restart sorofy-api`, then `GET` the earlier job | result survives; no row left `pending` | reversibility |
 | 11 | `curl https://…/metrics` after 8–9 | record `avg_build_seconds` as the SLO baseline | gate: SLO |
+| 12 | `curl -D- https://sorofy.site/gate/` and `…/gate/lib/consensus.js` | both `200`, both carrying `strict-transport-security` — the static route serves *and* does not bypass G7 | verification gate reachable |
+| 13 | `curl -o/dev/null -w '%{http_code}' https://sorofy.site/gate` (no trailing slash) | `302` to `/gate/` — the `redir` line is doing its job | verification gate reachable |
 
 The end-to-end case (8) — the same fixture the README documents, whose expected
 hash comes from the network, not from us:

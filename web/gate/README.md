@@ -9,6 +9,9 @@ is signed, the page reads the target contract's bytes from the ledger and asks t
 registry what a staked, slashable verifier set concluded about them. `Verified` lets the deposit
 through; anything else blocks it and says why.
 
+Deployed at <https://sorofy.site/gate/> — Caddy serves this directory from `/srv/gate` on the host
+(see [deploy-playbook.md](../../docs/deploy-playbook.md)). To run it locally instead:
+
 ```sh
 python3 serve.py          # http://127.0.0.1:8081
 node --test test/*.test.js
