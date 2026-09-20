@@ -128,7 +128,7 @@ docs/
   day1-build-engine.md          # build engine results, sandbox design, friction log
   day2-api.md                   # REST API, on-chain lookup, cache, real-size build
   day3-deploy-demo.md           # retroactive path, publish, deploy-readiness, demo
-  pitch-deck.html               # 8-slide jury pitch (self-contained HTML)
+  pitch-deck.html               # 8-slide MVP pitch, pre-hackathon (self-contained HTML)
 .github/workflows/
   ci.yml             # offline gate: fmt · clippy · build · test (every push/PR)
   integration.yml    # the #[ignore]d Docker/RPC tests (master + on demand)
@@ -290,7 +290,7 @@ The MVP proved the core claim (source → on-chain bytecode, including the retro
 was awarded by the SCF. Work since then was **Phase 0: making it deployable to testnet** — the
 security, auth, and operability work a socket-mounted service needs before it faces the
 internet. **Phase 0's quality gate is green as of 2026-08-16 and the service is live.** Live
-status: [docs/testnet-roadmap.md](docs/testnet-roadmap.md). Full pitch:
+status: [docs/testnet-roadmap.md](docs/testnet-roadmap.md). Pre-hackathon MVP pitch (2026-08-16, superseded by [HACKATHON.md](HACKATHON.md)):
 [docs/pitch-deck.html](docs/pitch-deck.html).
 
 **Done since the award (Phase 0).** Each closes a gap from the threat model in
