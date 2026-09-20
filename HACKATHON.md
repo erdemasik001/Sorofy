@@ -166,7 +166,7 @@ built.
   Root workspace test baseline recorded before touching the API: 60 passed, 0 failed, 9 ignored
   (the ignored ones need Docker, the pinned image and the network).
   Cold build of the token in the pinned image on this Mac (amd64 under Rosetta): 62–66 s.
-- **2026-09-19** — Step 4 done. Registry contract (35 tests, 7 of 7 deliberate mutations
+- **2026-09-19** — Step 4 done. Registry contract (35 tests, 8 of 8 deliberate mutations
   caught), built in the pinned image (62 s), two instances on testnet. The deployed VRFY token
   still reproduces from the newer source tree. On testnet, `slash` burned real VRFY with no
   external signature (the registry burns its own balance), and the burned amount matched the

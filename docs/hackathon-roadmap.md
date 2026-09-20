@@ -51,7 +51,7 @@ Gap 1 is the one that changes the story; the rest are increments.
 
 ## Toward M3
 
-- **Audit.** Mandatory third-party audit, cost covered separately by the [Soroban Audit Bank](https://stellar.gitbook.io/scf-handbook/supporting-programs/audit-bank). The registry contract is the surface that needs it — 18,746 bytes of wasm, 35 unit tests, 7 of 7 deliberate mutations caught. Audit readiness is mostly a documentation exercise from here.
+- **Audit.** Mandatory third-party audit, cost covered separately by the [Soroban Audit Bank](https://stellar.gitbook.io/scf-handbook/supporting-programs/audit-bank). The registry contract is the surface that needs it — 18,746 bytes of wasm, 35 unit tests, 8 of 8 deliberate mutations caught. Audit readiness is mostly a documentation exercise from here.
 - **Reference integration.** The RFP wants at least one. Blend v2 is already wired on testnet and the pool call is load-bearing. Moving it to mainnet is the work; finding a partner is not.
 - **SEP-58 dependency.** The one external unknown that is not ours to close. The Blend v2 pool publishes `source_repo` and **no SEP-58 build metadata** — checked with `stellar contract info meta`. Until contracts routinely publish it, a verifier has to be handed build descriptors out of band, which is what `config.js` does today and does not scale. SEP-58 is still Draft.
 

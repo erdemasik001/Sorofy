@@ -2,6 +2,22 @@
 
 An open-source, multi-verifier source verification service that proves a Soroban smart contract's on-chain WASM bytes were built from the public source code shown on explorers.
 
+> ## 🏆 Stellar Pro Hackathon 2026 · Scale track — submission: **[HACKATHON.md](HACKATHON.md)**
+>
+> A **dated delta** on top of the service described below: a Soroban verifier **registry**
+> (staking, conservative consensus, slashing) and a **verification gate** that refuses a Blend v2
+> deposit into code no staked verifier has attested. Deployed to testnet and readable on-chain
+> today — the gate needs no wallet, no account and no token to return a verdict.
+>
+> **Live demo: [sorofy.site/gate/](https://sorofy.site/gate/)** — check any Soroban contract; no wallet, no
+> account, no token, no payment.
+>
+> Architecture drawn from running code: [docs/hackathon-architecture.md](docs/hackathon-architecture.md) ·
+> post-hackathon roadmap: [docs/hackathon-roadmap.md](docs/hackathon-roadmap.md) ·
+> the honest limits are listed in the delta itself.
+>
+> **Everything below this block predates the hackathon (2026-09-19) and does not describe it.**
+
 > ## 🟢 Live on testnet: **[https://sorofy.site](https://sorofy.site)**
 >
 > Open it in a browser for the explorer, or `curl` it for JSON — the same URL serves both.
